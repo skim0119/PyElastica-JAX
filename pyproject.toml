@@ -28,6 +28,8 @@ dependencies = [
     "pyelastica",
     "tqdm",
     "click",
+    "jax",
+    "h5py",
 ]
 
 [build-system]
@@ -71,9 +73,6 @@ dev = [
     "mypy",
     "mypy-extensions",
     "flake8",
-]
-gpu = [
-    "jax>=0.6.2",
 ]
 
 [tool.black]

@@ -76,4 +76,3 @@ class JAXSystems(Protocol):
         states: tuple[JAXPyTree, ...],
         time: np.float64,
     ) -> tuple[JAXPyTree, ...]: ...
-

@@ -214,9 +214,9 @@ def run_cpu_reference(
     for _ in range(total_steps):
         time_value = stepper.step(sim, time_value, dt)
     elapsed = time.perf_counter() - start
-    assert np.isclose(time_value, snapped_final_time), (
-        "CPU axial stretching rollout did not end on the expected time grid."
-    )
+    assert np.isclose(
+        time_value, snapped_final_time
+    ), "CPU axial stretching rollout did not end on the expected time grid."
 
     state = {
         "position_collection": rod.position_collection.copy(),
