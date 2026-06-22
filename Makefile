@@ -33,53 +33,52 @@ pre-commit-install:
 #* Formatters
 .PHONY: black
 black:
-	uv run black --version
-	uv run black --config pyproject.toml elastica tests examples backend
+	uv run --no-sync black --version
+	uv run --no-sync black --config pyproject.toml src/elastica_jax tests examples benchmark
 
 .PHONY: black-check
 black-check:
-	uv run black --version
-	uv run black --diff --check --config pyproject.toml elastica tests examples
+	uv run --no-sync black --version
+	uv run --no-sync black --diff --check --config pyproject.toml src/elastica_jax tests examples
 
 .PHONY: flake8
 flake8:
-	uv run flake8 --version
-	uv run flake8 elastica
+	uv run --no-sync flake8 --version
+	uv run --no-sync flake8 src/elastica_jax
 
 .PHONY: autoflake-check
 autoflake-check:
-	uv run autoflake --version
-	uv run autoflake --check $(AUTOFLAKE_ARGS) elastica tests examples
+	uv run --no-sync autoflake --version
+	uv run --no-sync autoflake --check $(AUTOFLAKE_ARGS) src/elastica_jax tests examples
 
 .PHONY: autoflake-format
 autoflake-format:
-	uv run autoflake --version
-	uv run autoflake --in-place $(AUTOFLAKE_ARGS) elastica tests examples backend
+	uv run --no-sync autoflake --version
+	uv run --no-sync autoflake --in-place $(AUTOFLAKE_ARGS) src/elastica_jax tests examples
 
 .PHONY: format-codestyle
 format-codestyle: black autoflake-format
 
 .PHONY: mypy
 mypy:
-	uv run mypy --config-file pyproject.toml elastica  # Main
-	uv run mypy --config-file pyproject.toml --explicit-package-bases \
+	uv run --no-sync mypy --config-file pyproject.toml src/elastica_jax  # Main
+	uv run --no-sync mypy --config-file pyproject.toml --explicit-package-bases \
 		examples/AxialStretchingCase \
 		examples/ButterflyCase \
 		examples/CatenaryCase \
-		examples/KnotCase \
 		examples/ContinuumSnakeCase
 
 .PHONY: test
 test:
-	uv run pytest -c pyproject.toml tests
+	uv run --no-sync pytest -c pyproject.toml tests
 
 .PHONY: test_coverage
 test_coverage:
-	NUMBA_DISABLE_JIT=1 uv run pytest --cov=elastica -c pyproject.toml tests
+	NUMBA_DISABLE_JIT=1 uv run --no-sync pytest --cov=src/elastica_jax -c pyproject.toml tests
 
 .PHONY: test_coverage_xml
 test_coverage_xml:
-	NUMBA_DISABLE_JIT=1 uv run pytest --cov=elastica --cov-report=xml -c pyproject.toml tests
+	NUMBA_DISABLE_JIT=1 uv run --no-sync pytest --cov=src/elastica_jax --cov-report=xml -c pyproject.toml tests
 
 .PHONY: check-codestyle
 check-codestyle: black-check flake8 autoflake-check
