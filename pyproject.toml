@@ -34,11 +34,14 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+sources = ["src"]
+
 [tool.hatch.build.targets.wheel]
-packages = ["elastica"]
+packages = ["src/elastica_jax"]
 
 [tool.hatch.build.targets.sdist]
-include = ["elastica"]
+include = ["src/elastica_jax"]
 
 [project.optional-dependencies]
 docs = [
@@ -75,7 +78,7 @@ gpu = [
 
 [tool.black]
 # https://github.com/psf/black
-target-version = ["py310"]
+target-version = ["py312"]
 line-length = 88
 color = true
 exclude = '''
@@ -106,7 +109,7 @@ norecursedirs = ["hooks", "*.egg", ".eggs", "dist", "build", "docs", ".tox", ".g
 
 [tool.mypy]
 # https://mypy.readthedocs.io/en/latest/config_file.html#using-a-pyproject-toml-file
-python_version = "3.10"
+python_version = "3.12"
 pretty = true
 show_traceback = true
 color_output = true
@@ -135,8 +138,7 @@ warn_unused_configs = true
 warn_unused_ignores = false
 
 exclude = [
-    "elastica/experimental/*",
-    "backend/*"
+    "src/elastica_jax/experimental/*",
 ]
 
 [tool.coverage.report]
@@ -169,6 +171,6 @@ branch = true
 omit = [
     "*/.local/*",
 	"setup.py",
-    "elastica/experimental/*",
-    "elastica/**/protocol.py",
+    "src/elastica_jax/experimental/*",
+    "src/elastica_jax/**/protocol.py",
 ]
