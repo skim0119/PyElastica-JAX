@@ -27,7 +27,7 @@ from elastica.memory_block.utils import (
     make_block_memory_metadata,
     make_block_memory_periodic_boundary_metadata,
 )
-from elastica_jax.reset_functions_for_block_structure import _reset_scalar_ghost
+from elastica.reset_functions_for_block_structure import _reset_scalar_ghost
 from elastica.rod.cosserat_rod import (
     _compute_sigma_kappa_for_blockstructure,
 )
