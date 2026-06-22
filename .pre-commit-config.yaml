@@ -1,0 +1,25 @@
+default_language_version:
+  python: python3
+
+default_stages: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+        exclude: LICENSE
+      - id: check-added-large-files
+      - id: mixed-line-ending
+
+  - repo: local
+    hooks:
+      - id: formatting
+        name: formatting
+        entry: make formatting
+        types: [python]
+        language: system
