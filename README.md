@@ -7,6 +7,18 @@ JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) fram
 > Currently under development.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
 
+## Before you start
+
+`JAX`'s default floating point precision is `float32`, but the Cosserat rod numerics is not very stable with `float32`. User should enable `float64` for more stable numerics. It is not decided yet whether to make this the default behavior within `PyElastica-JAX`.
+
+```py
+jax.config.update('jax_enable_x64', True)
+```
+or
+```bash
+JAX_ENABLE_X64=1 python ...
+```
+
 ## Basic Tutorial
 
 In `PyElastica`, a system, like `CosseratRod`, is collected and stored in a blocked memory space. This operation occurs during `finalize()`. Using `simulator.enable_block_supports(...)`, the type of block can be specified and configured.
