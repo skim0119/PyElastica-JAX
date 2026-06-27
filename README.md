@@ -5,7 +5,7 @@
 JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) framework for simulating assemblies of Cosserat Rods.
 This framework extension supports more directly handling of the `block` concept.
 
-> Currently under development.
+> Currently under development. All features are experimental, and interface are subject to change without detailed discussion. Please leave issues if you have any suggestions or recommendations.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
 
 ## Before you start
@@ -38,7 +38,7 @@ class JAXSimulator(
 
 simulator = JAXSimulator()
 rod_block = eaj.configure_rod_block()
-simulator.enable_block_supports(
+simulator.enable_block_supports(  # <-- assign the JAX block for CosseratRod
     ea.CosseratRod,
     rod_block,
 )
@@ -54,7 +54,7 @@ simulator.finalize()
 ```
 
 The syntax is almost similar to `PyElastica`. To use position-verlet scheme, load `eaj.PositionVerletJAX`.
-Unlike `PyElastica`, stepper does not provide single `step` function, instead it provides `integrate` function. This is due to the architecture design of `JAX` that is not same as `numba`: the amortized optimization of `jit` compilation yield a lot more efficient runtime with `fori_loop`, which is ineffective to run single-step at a time.
+Unlike `PyElastica`, stepper does not provide single `step` method, instead it provides `integrate` method. This is due to the architecture design of `JAX` that is not same as `numba`: the amortized optimization of `jit` compilation yield a lot more efficient runtime with `fori_loop`, which is ineffective to run single-step at a time.
 
 ```py
 timestepper = eaj.PositionVerletJAX()
@@ -71,9 +71,9 @@ time = timestepper.integrate(
 
 ### How to collect data?
 
-In `PyElastica`, data is collected by attaching `ea.Callback` to the system. In `PyElastica-JAX`, similar callback syntax is not available, as retrieving data from the block state is not supported.
+In `PyElastica`, data is collected by attaching `ea.Callback` to the system. In `PyElastica-JAX`, similar callback syntax is _not available_, as retrieving data from the block state is not supported.
 
-> **_NOTE:_** This is key differnce between original PyElastica and PyElastica-JAX. The block rod (created in simulator during finalize step) is not always synchronized with the reference rods (created by user). This is to support multi-device and heterogeneous (GPU, CPU+GPU, etc.) execution more smoothly within JAX syntax pattern.
+> **_NOTE:_** This is key differnce between original PyElastica and PyElastica-JAX. The block rod (handled within the simulator during) is not always synchronized with the reference rods (created by user). This is to support multi-device and heterogeneous (GPU, CPU+GPU, etc.) execution more smoothly within JAX syntax pattern.
 > In detail, callback in PyElastica interrupt the integrate loop and collect data for I/O. Most of the time, due to large number of simulation steps, branch like `step % step_skip == 0` is used to collect data intermittently. This could be achieved using `jax.pure_callback` (probably) but it defeats the point of using JIT. Hence, collection is taken cared outside, closer to user's control.
 
 Here is the recommended way to collect data. The integration could be broken into chunks, at desirable frame rate.
@@ -90,11 +90,14 @@ n_frames = int(round(final_time / frame_dt)) + 1
 for frame_idx in tqdm(range(n_frames)):
     jax.block_until_ready(rod_block)
 
-    # To access block memory directly
+    # Not recommended: access block memory directly. It may
+    # includes ghost elements that may not be intuitive unless
+    # user is aware of the block implementation details.
+    # Although it could be useful for more advanced use cases.
     # shape would be (3, n_block_length)
     position_collection = rod_block.position_collection.copy()
 
-    # To sync rod views
+    # Recommended: sync rod views from block to reference rods.
     rod_block.from_device()
     positions = []
     for rod_view in rods:
@@ -128,7 +131,7 @@ for frame_idx in tqdm(range(n_frames)):
 
 In `PyElastica`, operations could be inserted using modules such as `ea.Forcing`, `ea.Damping`, `ea.Constraints`, etc. Depending on modules, user can add custom operation at the end of kinematic steps (`constrain_values`), end of dynamic steps (`constrain_rates`), or add loads before the dynamic steps (`synchronize`). This gives great flexibility and customizability to the simulation to define wide range of physics and behaviors for problems.
 
-`PyElastica-JAX` follows the same concepts and philosophy, but with some simplification and changes according to `JAX`'s pure function pattern. This gives better optimization and amortized compilation for entire compilation of the timestepping loop.
+`PyElastica-JAX` follows the same concepts and philosophy, but with some simplification and changes according to `JAX`'s pure function pattern. This gives better optimization and amortized compilation for entire JIT timestepping loop.
 
 In `PyElastica-JAX`, adding rod-wise operation is done with mixin module `eaj.JAXOps` into simulator class. This gives ability to run `operate` method to add operation to a specific system.
 
@@ -304,16 +307,42 @@ simulator.operate_block(eaj.MemoryBlockCosseratRodJax).using(
 
 ## Advanced Usage
 
-### Sharded Block - multi-core CPU
+### GPU Execution
+
+Pass an explicit backend to `configure_rod_block` so rod state is allocated on that
+device before `finalize()`:
+
+```py
+rod_block = eaj.configure_rod_block(device="cuda", device_dtype=np.float64)
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
+...
+simulator.finalize()
+```
+
+### Sharded Block — multi-device execution
+
+For many rods spread across multiple GPUs (or TPUs), configure a sharded block with an execution mesh:
+
+```py
+devices = jax.devices("cuda")  # list of multiple devices
+rod_block = eaj.configure_rod_block_sharded(
+    devices=devices,
+    device_dtype=np.float64,
+)
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
+```
+
+To emulate multi-device scenario on CPU, set the number of devices to be used for execution.
 
 ```py
 import os
+
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
 ```
 
-### Memory Block - single-GPU
+### Multi-core Multi-host CPU Execution
 
-### Memory Block - multi-GPU
+TODO: `mpi4jax` integration for multi-core MPI execution.
 
 ## Terminology
 
