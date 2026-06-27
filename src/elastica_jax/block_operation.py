@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, TypeAlias
+from enum import Enum
+from typing import Any, ClassVar, TypeAlias
 
 import numpy as np
 
 JAXTime: TypeAlias = np.float64
 JAXBlockState: TypeAlias = dict[str, Any]
+
+
+class CommunicationScope(Enum):
+    """How far a block operator must reach across shards during synchronize."""
+
+    LOCAL = "local"
+    HALO_READ = "halo_read"
+    GLOBAL = "global"
 
 
 class NoBlockOpJax:
@@ -46,6 +55,9 @@ class NoBlockOpJax:
     - `jax_per_rod_operate_synchronize(rod_view, time)`
     - `jax_per_rod_operate_constrain_rates(rod_view, time)`
     """
+
+    communication_scope: ClassVar[CommunicationScope] = CommunicationScope.LOCAL
+    halo_fields: ClassVar[tuple[str, ...]] = ()
 
     def jax_block_operate_constrain_values(
         self,
