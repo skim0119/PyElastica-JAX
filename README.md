@@ -3,6 +3,7 @@
 </div>
 
 JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) framework for simulating assemblies of Cosserat Rods.
+This framework extension supports more directly handling of the `block` concept.
 
 > Currently under development.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
@@ -33,10 +34,13 @@ class JAXSimulator(
     ea.BaseSystemCollection,  # From PyElastica
     eaj.JAXOps
 ):
+    pass
+
 simulator = JAXSimulator()
+rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(
-    ea.CosseratRod,                # System type
-    eaj.MemoryBlockCosseratRodJax  # Block type for storing system
+    ea.CosseratRod,
+    rod_block,
 )
 
 # Append rods
@@ -49,11 +53,11 @@ for _ in range(n_rods):
 simulator.finalize()
 ```
 
-The syntax is almost similar to `PyElastica`. To use position-verlet scheme, load `PositionVerletJAX`.
+The syntax is almost similar to `PyElastica`. To use position-verlet scheme, load `eaj.PositionVerletJAX`.
 Unlike `PyElastica`, stepper does not provide single `step` function, instead it provides `integrate` function. This is due to the architecture design of `JAX` that is not same as `numba`: the amortized optimization of `jit` compilation yield a lot more efficient runtime with `fori_loop`, which is ineffective to run single-step at a time.
 
 ```py
-timestepper = ea.PositionVerletJAX()
+timestepper = eaj.PositionVerletJAX()
 time = 0.0
 final_time = 10.0
 dt = 0.001
@@ -76,9 +80,6 @@ Here is the recommended way to collect data. The integration could be broken int
 User can fetch the data from the block state, and copy. For example, the following snippet could be used to collect the position to create animation.
 
 ```py
-# FIXME: This API could be improved.
-block = tuple(simulator.final_systems())[0]
-
 current_time = 0.0
 final_time = 10.0
 dt = 0.001
@@ -87,14 +88,14 @@ frame_dt = 1.0 / fps
 steps_per_frame = int(round(frame_dt / dt))
 n_frames = int(round(final_time / frame_dt)) + 1
 for frame_idx in tqdm(range(n_frames)):
-    jax.block_until_ready(block)
+    jax.block_until_ready(rod_block)
 
     # To access block memory directly
     # shape would be (3, n_block_length)
-    position_collection = block.position_collection.copy()
+    position_collection = rod_block.position_collection.copy()
 
     # To sync rod views
-    block.from_device()
+    rod_block.from_device()
     positions = []
     for rod_view in rods:
         positions.append(rod_view.position_collection.copy())
@@ -136,7 +137,8 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOps):
     pass
 
 simulator = JAXSimulator()
-simulator.enable_block_supports(ea.CosseratRod, eaj.MemoryBlockCosseratRodJax)
+rod_block = eaj.configure_rod_block()
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
 rod = ea.CosseratRod.straight_rod(...)
 simulator.append(rod)
@@ -233,7 +235,8 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 simulator = JAXSimulator()
-simulator.enable_block_supports(ea.CosseratRod, eaj.MemoryBlockCosseratRodJax)
+rod_block = eaj.configure_rod_block()
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
 for _ in range(n_rods):
     simulator.append(ea.CosseratRod.straight_rod(...))
@@ -291,7 +294,7 @@ class GravityBlockOp(eaj.NoBlockOpJax):
         return updated
 
 
-simulator.operate_block(ea.CosseratRod).using(
+simulator.operate_block(eaj.MemoryBlockCosseratRodJax).using(
     GravityBlockOp,
     acc_gravity=jnp.array([0.0, 0.0, -9.80665]),
     tip_position=jnp.array([0.0, 0.0, 0.0]),
@@ -321,4 +324,4 @@ This repository expand the usage of `block` concept directly, along with `JAX`'s
 
 ## Features that are extended from PyElastica
 
-- `configure_sharded_block_for_cosserat_rod(..., block_checkpoint=path)`: pass the checkpoint path when configuring the block class. During `finalize()` → `construct_memory_block_structures` → block `__init__`, an existing checkpoint skips packing rod data into the block and loads saved state instead; a missing file triggers a save after block construction.
+- `configure_rod_block_sharded(..., block_checkpoint=path)`: pass the checkpoint path when configuring the block. During `finalize()` → `construct_memory_block_structures` → block `__init__`, an existing checkpoint skips packing rod data into the block and loads saved state instead; a missing file triggers a save after block construction.
