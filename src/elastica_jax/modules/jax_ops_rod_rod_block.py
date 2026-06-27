@@ -10,7 +10,7 @@ from elastica_jax.rod_rod_operation import (
     JAXRodRodBlockMetadata,
     NoRodRodBlockOpJax,
 )
-from elastica_jax.memory_block.memory_block_rod_jax import MemoryBlockCosseratRodJax
+from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica.typing import SystemIdxType
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
@@ -130,7 +130,7 @@ class JAXRodRodBlockOps(SystemCollectionProtocol):
         second_sys_idx: SystemIdxType,
     ) -> _RodRodPairBlockLocation:
         for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, MemoryBlockCosseratRodJax):
+            if not isinstance(system, _CosseratRodMemoryBlock):
                 continue
             first_matches = np.where(system.system_idx_list == first_sys_idx)[0]
             second_matches = np.where(system.system_idx_list == second_sys_idx)[0]
@@ -173,7 +173,7 @@ class JAXRodRodBlockOps(SystemCollectionProtocol):
             )
 
         raise RuntimeError(
-            "Requested rod pair was not found in a common MemoryBlockCosseratRodJax."
+            "Requested rod pair was not found in a common _CosseratRodMemoryBlock."
         )
 
 

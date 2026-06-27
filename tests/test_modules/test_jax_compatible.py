@@ -5,7 +5,7 @@ jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
 from elastica.jax_operation import NoOpsJax
-from elastica.memory_block.memory_block_rod_jax import MemoryBlockCosseratRodJax
+from elastica_jax.memory_block.block_factory import configure_rod_block
 from elastica.modules import BaseSystemCollection, JAXOps
 from elastica.rod.cosserat_rod import CosseratRod
 
@@ -50,7 +50,7 @@ def test_jax_compatible_defaults_to_identity_transforms():
 def test_jax_ops_finalize_wraps_rod_view_into_stage_operator():
     with jax.default_device(jax.devices("cpu")[0]):
         simulator = _DummySimulator()
-        simulator.enable_block_supports(CosseratRod, MemoryBlockCosseratRodJax)
+        simulator.enable_block_supports(CosseratRod, configure_rod_block())
 
         rod = _build_rod()
         simulator.append(rod)

@@ -14,7 +14,7 @@ from elastica_jax.memory_block.memory_block_rigid_body_jax import (
 from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodView,
     JAXRodViewMetadata,
-    MemoryBlockCosseratRodJax,
+    _CosseratRodMemoryBlock,
 )
 from elastica.typing import SystemIdxType
 
@@ -173,7 +173,7 @@ class JAXOpsRodRigidBody(SystemCollectionProtocol):
         sys_id: SystemIdxType,
     ) -> JAXRodViewMetadata:
         for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, MemoryBlockCosseratRodJax):
+            if not isinstance(system, _CosseratRodMemoryBlock):
                 continue
             matches = np.where(system.system_idx_list == sys_id)[0]
             if matches.size == 0:
@@ -195,7 +195,7 @@ class JAXOpsRodRigidBody(SystemCollectionProtocol):
                 ),
             )
         raise RuntimeError(
-            "Mixed JAX operator target rod was not found in a MemoryBlockCosseratRodJax. "
+            "Mixed JAX operator target rod was not found in a _CosseratRodMemoryBlock. "
             "Enable JAX block support for the rod type before finalize()."
         )
 
@@ -239,9 +239,9 @@ class _JAXRodRigidBodyOp:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        assert issubclass(
-            cls, NoRodRigidBodyJax
-        ), f"{cls} is not a valid mixed JAX operator. It must derive from NoRodRigidBodyJax."
+        assert issubclass(cls, NoRodRigidBodyJax), (
+            f"{cls} is not a valid mixed JAX operator. It must derive from NoRodRigidBodyJax."
+        )
         self._op_cls = cls
         self._args = args
         self._kwargs = kwargs

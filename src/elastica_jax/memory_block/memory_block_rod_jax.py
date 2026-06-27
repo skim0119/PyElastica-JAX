@@ -84,6 +84,8 @@ _VORONOI_ATTRS: tuple[str, ...] = (
 )
 _SYNCABLE_ATTRS: tuple[str, ...] = _NODE_ATTRS + _ELEMENT_ATTRS + _VORONOI_ATTRS
 
+type RodSyncTarget = RodType | Sequence[RodType] | Literal["all"]
+
 
 @dataclass(frozen=True)
 class JAXRodViewMetadata:
@@ -246,6 +248,7 @@ def _jax_compute_internal_forces_and_torques(
     periodic_boundary_elems_idx: jax.Array,
     periodic_boundary_voronoi_idx: jax.Array,
 ) -> tuple[jax.Array, ...]:
+    # Compute Geometry
     position_diff = _jax_position_difference(position_collection)
     lengths = jnp.sqrt(jnp.sum(position_diff * position_diff, axis=0)) + jnp.asarray(
         1.0e-14, dtype=position_collection.dtype
@@ -265,6 +268,7 @@ def _jax_compute_internal_forces_and_torques(
         voronoi_dilatation, periodic_boundary_voronoi_idx
     )
 
+    # Compute Internal Stress
     sigma = dilatation[jnp.newaxis, :] * _jax_batch_matvec(
         director_collection, tangents
     ) - jnp.array([[0.0], [0.0], [1.0]], dtype=position_collection.dtype)
@@ -285,6 +289,7 @@ def _jax_compute_internal_forces_and_torques(
         cosserat_internal_stress, ghost_elems_idx
     )
 
+    # Compute Internal Couple
     kappa = _jax_inv_rotate(director_collection) / rest_voronoi_lengths[jnp.newaxis, :]
     kappa = _jax_sync_periodic_vector(kappa, periodic_boundary_voronoi_idx)
 
@@ -293,6 +298,7 @@ def _jax_compute_internal_forces_and_torques(
         internal_couple, periodic_boundary_voronoi_idx
     )
 
+    # Compute Dilatation Rate
     r_dot_v = _jax_batch_dot(position_collection, velocity_collection)
     r_plus_one_dot_v = _jax_batch_dot(
         position_collection[..., 1:], velocity_collection[..., :-1]
@@ -309,6 +315,7 @@ def _jax_compute_internal_forces_and_torques(
         dilatation_rate, periodic_boundary_elems_idx
     )
 
+    # Compute Internal Torques
     voronoi_dilatation_inv_cube = 1.0 / (voronoi_dilatation**3)
     bend_twist_couple_2d = _jax_two_point_difference_for_block_structure(
         internal_couple * voronoi_dilatation_inv_cube[jnp.newaxis, :], ghost_voronoi_idx
@@ -415,30 +422,41 @@ def _jax_zero_external_loads(
     return jnp.zeros_like(external_forces), jnp.zeros_like(external_torques)
 
 
-class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
+@jax.tree_util.register_pytree_node_class
+class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     """
     JAX-backed memory block with explicit host/device synchronization.
 
     Unlike the NumPy memory block, this implementation does not make the original
     rods alias the block arrays. The block owns its host-side memory and only
-    pushes data back to rods on explicit ``from_device`` / ``from_gpu`` calls.
+    pushes data back to rods on explicit ``from_device`` calls.
     """
 
     allow_cpu_fallback: bool = False
 
     def __init__(
         self,
+        *,
+        device: jax.Device,
+        device_dtype: np.dtype,
+    ) -> None:
+        self._device_dtype = device_dtype
+        self._initial_device = device
+
+    def __call__(
+        self,
         systems: list[RodType],
         system_idx_list: list[SystemIdxType],
-        *,
-        device_dtype: str | np.dtype | None = None,
-        device: jax.Device | None = None,
-    ) -> None:
+    ) -> _CosseratRodMemoryBlock:
         self._systems = tuple(systems)
         self.n_systems = len(systems)
         self.ring_rod_flag = False
-        self._device_dtype = self._normalize_device_dtype(device_dtype)
-        self._initial_device = device
+        from elastica_jax.checkpoint.block_checkpoint import (
+            consume_block_checkpoint_shard,
+            is_block_checkpoint_load_pending,
+        )
+
+        self._pack_from_rods = not is_block_checkpoint_load_pending()
 
         system_straight_rod = []
         system_ring_rod = []
@@ -532,9 +550,10 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
         _reset_scalar_ghost(self.rest_lengths, self.ghost_elems_idx, 1.0)
         _reset_scalar_ghost(self.rest_voronoi_lengths, self.ghost_voronoi_idx, 1.0)
 
-        _compute_sigma_kappa_for_blockstructure(self)
+        if self._pack_from_rods:
+            _compute_sigma_kappa_for_blockstructure(self)
 
-        if n_ring_rods != 0:
+        if self._pack_from_rods and n_ring_rods != 0:
             for system_to_be_added in system_ring_rod:
                 if np.count_nonzero(system_to_be_added.rest_sigma) == 0:
                     system_to_be_added.rest_sigma[:] = system_to_be_added.sigma[:]
@@ -550,11 +569,34 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
 
         self._device_state: dict[str, jax.Array] = {}
         self._device_metadata: dict[str, jax.Array] = {}
-        self._device_platform = (
-            device.platform if device is not None else jax.default_backend()
-        )
+        device = self._initial_device
+        self._device_platform = device.platform
         self._device_dirty = False
         self._initialize_device_state(device=device)
+        if not self._pack_from_rods:
+            checkpoint_shard = consume_block_checkpoint_shard()
+            assert checkpoint_shard is not None, (
+                "Block checkpoint loading was requested but no shard payload "
+                "was available during block construction."
+            )
+            checkpoint_path, shard_index = checkpoint_shard
+            from elastica_jax.checkpoint.block_checkpoint import (
+                apply_block_checkpoint_to_memory_block,
+            )
+
+            apply_block_checkpoint_to_memory_block(
+                self,
+                checkpoint_path,
+                shard_index=shard_index,
+                device=device,
+            )
+        return self
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     @property
     def device_platform(self) -> str:
@@ -563,22 +605,6 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
     @property
     def device_dtype(self) -> np.dtype:
         return self._device_dtype
-
-    @staticmethod
-    def _normalize_device_dtype(device_dtype: str | np.dtype | None) -> np.dtype:
-        if device_dtype is None:
-            return np.dtype(np.float64 if jax.config.x64_enabled else np.float32)
-        normalized = np.dtype(device_dtype)
-        if normalized == np.dtype(np.float64) and not jax.config.x64_enabled:
-            raise ValueError(
-                "float64 device_dtype requires JAX x64 support. Enable it with "
-                '`jax.config.update("jax_enable_x64", True)` or use float32.'
-            )
-        if normalized not in (np.dtype(np.float32), np.dtype(np.float64)):
-            raise ValueError(
-                "device_dtype must be one of float32 or float64 for MemoryBlockCosseratRodJax."
-            )
-        return normalized
 
     def _allocate_block_variables_in_nodes(self, systems: list[RodType]) -> None:
         map_scalar_dofs_in_rod_nodes = {"mass": 0}
@@ -810,6 +836,8 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
             self.__dict__[attr_name] = np.lib.stride_tricks.as_strided(
                 block_memory[row_idx], shape=view_shape
             )
+            if not getattr(self, "_pack_from_rods", True):
+                continue
             for system_idx, system in enumerate(systems):
                 start_idx = start_idx_list[system_idx]
                 end_idx = end_idx_list[system_idx]
@@ -821,11 +849,55 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
             )
 
     def _normalize_attr_names(
-        self, attrs: Iterable[str] | None = None
+        self, variables: Iterable[str] | None = None
     ) -> tuple[str, ...]:
-        if attrs is None:
+        if variables is None:
             return _SYNCABLE_ATTRS
-        return tuple(dict.fromkeys(attrs))
+        return tuple(dict.fromkeys(variables))
+
+    def _validate_sync_variables(self, variables: Sequence[str]) -> None:
+        for variable in variables:
+            if variable not in _SYNCABLE_ATTRS:
+                raise KeyError(variable)
+            if not hasattr(self, variable):
+                raise KeyError(variable)
+            if variable not in self._device_state:
+                raise KeyError(variable)
+
+    def _normalize_rod_sync_target(self, rods: RodSyncTarget) -> tuple[RodType, ...]:
+        assert hasattr(self, "_systems"), (
+            "Block must be built before synchronizing with rods."
+        )
+        if rods == "all":
+            return self._systems
+        if isinstance(rods, (list, tuple)):
+            return tuple(rods)
+        return (rods,)
+
+    def _resolve_system_indices(self, rods: Sequence[RodType]) -> list[int]:
+        indices: list[int] = []
+        for rod in rods:
+            try:
+                indices.append(self._systems.index(rod))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Rod {rod!r} was not packed into this block."
+                ) from exc
+        return indices
+
+    def _pull_rod_state_to_block(
+        self,
+        variables: Sequence[str],
+        system_indices: Sequence[int],
+    ) -> None:
+        for system_idx in system_indices:
+            system = self._systems[system_idx]
+            for variable in variables:
+                start_idx, end_idx = self._get_attr_slice_indices(variable, system_idx)
+                np.copyto(
+                    getattr(self, variable)[..., start_idx:end_idx],
+                    system.__dict__[variable],
+                )
 
     def _initialize_device_state(
         self,
@@ -849,48 +921,80 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
 
     def to_device(
         self,
-        attrs: Iterable[str] | None = None,
+        rods: RodSyncTarget = "all",
         *,
-        device: jax.Device | None = None,
+        variables: Iterable[str] | None = None,
     ) -> None:
-        raise RuntimeError(
-            "MemoryBlockCosseratRodJax keeps device state authoritative after "
-            "initialization. `to_device()` is not supported after construction; "
-            "run JAX kernels on the block and use `from_device()` for explicit host "
-            "readback."
-        )
+        """
+        Copy host rod state into the block and upload selected fields to device.
 
-    def to_gpu(self, attrs: Iterable[str] | None = None) -> None:
-        self.to_device(attrs=attrs)
+        Parameters
+        ----------
+        rods
+            One rod, a sequence of rods, or ``"all"`` for every rod in the block.
+        variables
+            Block fields to synchronize. Defaults to all syncable fields.
+        """
+        sync_variables = self._normalize_attr_names(variables)
+        self._validate_sync_variables(sync_variables)
+        system_indices = self._resolve_system_indices(
+            self._normalize_rod_sync_target(rods)
+        )
+        self._pull_rod_state_to_block(sync_variables, system_indices)
+        for variable in sync_variables:
+            host_array = np.asarray(getattr(self, variable), dtype=self._device_dtype)
+            self._device_state[variable] = jax.device_put(
+                host_array,
+                device=self._initial_device,
+            )
+        self._refresh_device_views()
+        self._device_dirty = False
 
     def from_device(
         self,
-        attrs: Iterable[str] | None = None,
+        rods: RodSyncTarget = "all",
         *,
+        variables: Iterable[str] | None = None,
         update_rods: bool = True,
     ) -> None:
-        sync_attrs = self._normalize_attr_names(attrs)
-        for attr in sync_attrs:
-            np.copyto(getattr(self, attr), np.asarray(self._device_state[attr]))
+        """
+        Copy selected fields from device to host block memory and rod objects.
+
+        Parameters
+        ----------
+        rods
+            One rod, a sequence of rods, or ``"all"`` for every rod in the block.
+        variables
+            Block fields to synchronize. Defaults to all syncable fields.
+        update_rods
+            When ``False``, update block host memory only.
+        """
+        sync_variables = self._normalize_attr_names(variables)
+        self._validate_sync_variables(sync_variables)
+        for variable in sync_variables:
+            np.copyto(
+                getattr(self, variable),
+                np.asarray(self._device_state[variable]),
+            )
         if update_rods:
-            self._push_block_state_to_rods(sync_attrs)
+            system_indices = self._resolve_system_indices(
+                self._normalize_rod_sync_target(rods)
+            )
+            self._push_block_state_to_rods(sync_variables, system_indices)
         self._device_dirty = False
 
-    def from_gpu(
+    def _push_block_state_to_rods(
         self,
-        attrs: Iterable[str] | None = None,
-        *,
-        update_rods: bool = True,
+        variables: Sequence[str],
+        system_indices: Sequence[int],
     ) -> None:
-        self.from_device(attrs=attrs, update_rods=update_rods)
-
-    def _push_block_state_to_rods(self, attrs: Sequence[str]) -> None:
-        for system_idx, system in enumerate(self._systems):
-            for attr in attrs:
-                start_idx, end_idx = self._get_attr_slice_indices(attr, system_idx)
+        for system_idx in system_indices:
+            system = self._systems[system_idx]
+            for variable in variables:
+                start_idx, end_idx = self._get_attr_slice_indices(variable, system_idx)
                 np.copyto(
-                    system.__dict__[attr],
-                    getattr(self, attr)[..., start_idx:end_idx],
+                    system.__dict__[variable],
+                    getattr(self, variable)[..., start_idx:end_idx],
                 )
 
     def _get_attr_slice_indices(self, attr: str, system_idx: int) -> tuple[int, int]:
@@ -954,6 +1058,26 @@ class MemoryBlockCosseratRodJax(RodBase, _RodSymplecticStepperMixin):
         self._device_state = dict(state)
         self._refresh_device_views()
         self._device_dirty = True
+
+    def tree_flatten(
+        self,
+    ) -> tuple[tuple[jax.Array, ...], tuple[_CosseratRodMemoryBlock, tuple[str, ...]]]:
+        device_state = getattr(self, "_device_state", None)
+        if not device_state:
+            return (), (self, ())
+        keys = tuple(sorted(device_state.keys()))
+        return tuple(device_state[key] for key in keys), (self, keys)
+
+    @classmethod
+    def tree_unflatten(
+        cls,
+        aux_data: tuple[_CosseratRodMemoryBlock, tuple[str, ...]],
+        children: tuple[jax.Array, ...],
+    ) -> _CosseratRodMemoryBlock:
+        block, keys = aux_data
+        if keys:
+            block.jax_set_state(dict(zip(keys, children, strict=True)))
+        return block
 
     def jax_kinematic_step(
         self,

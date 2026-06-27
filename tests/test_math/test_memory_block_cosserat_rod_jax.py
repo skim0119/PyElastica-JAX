@@ -6,8 +6,14 @@ jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica.memory_block.memory_block_rod_jax import (
-    MemoryBlockCosseratRodJax,
+from elastica_jax.memory_block.block_factory import (
+    DEFAULT_ROD_BLOCK_BACKEND,
+    DEFAULT_ROD_BLOCK_DTYPE,
+    _normalize_device_dtype,
+    _resolve_device,
+)
+from elastica_jax.memory_block.memory_block_rod_jax import (
+    _CosseratRodMemoryBlock,
     _jax_update_accelerations,
 )
 from elastica.rod.cosserat_rod import (
@@ -23,8 +29,16 @@ JAX_RTOL = 1.0e-6
 
 
 def _make_block(rod, **kwargs):
+    device = kwargs.pop("device", DEFAULT_ROD_BLOCK_BACKEND)
+    device_dtype = kwargs.pop("device_dtype", DEFAULT_ROD_BLOCK_DTYPE)
+    assert not kwargs, f"Unexpected kwargs: {kwargs}"
     with jax.default_device(CPU_DEVICE):
-        return MemoryBlockCosseratRodJax([rod], [0], **kwargs)
+        block = _CosseratRodMemoryBlock(
+            device=_resolve_device(device),
+            device_dtype=_normalize_device_dtype(device_dtype),
+        )
+        block([rod], [0])
+        return block
 
 
 class MockRod:
@@ -92,7 +106,7 @@ def test_memory_block_cosserat_rod_jax_to_from_device_updates_rods():
         updated_velocity, device=CPU_DEVICE
     )
 
-    block.from_device(attrs=("position_collection", "velocity_collection"))
+    block.from_device(variables=("position_collection", "velocity_collection"))
 
     assert_array_equal(block.position_collection, updated_position)
     assert_array_equal(block.velocity_collection, updated_velocity)
@@ -109,15 +123,18 @@ def test_memory_block_cosserat_rod_jax_does_not_alias_original_rods():
     assert not np.shares_memory(block.director_collection, rod.director_collection)
 
 
-def test_memory_block_cosserat_rod_jax_to_device_raises_after_initialization():
+def test_memory_block_cosserat_rod_jax_to_device_updates_device_from_rod():
     rod = MockRod(6)
     block = _make_block(rod)
 
-    with pytest.raises(RuntimeError):
-        block.to_device(attrs=("position_collection",))
+    rod.position_collection += 1.25
+    block.to_device(rod, variables=("position_collection",))
 
-    with pytest.raises(RuntimeError):
-        block.to_gpu(attrs=("position_collection",))
+    np.testing.assert_allclose(
+        np.asarray(block._device_state["position_collection"]),
+        block.position_collection,
+    )
+    np.testing.assert_allclose(block.position_collection, rod.position_collection)
 
 
 def test_memory_block_cosserat_rod_jax_respects_device_dtype():
@@ -141,7 +158,7 @@ def test_memory_block_cosserat_rod_jax_protocol_methods_are_state_consistent():
         state = block.jax_zero_external_loads(state, np.float64(0.2))
     block.jax_set_state(state)
     block.from_device(
-        attrs=(
+        variables=(
             "position_collection",
             "director_collection",
             "lengths",
@@ -182,7 +199,7 @@ def test_memory_block_cosserat_rod_jax_protocol_methods_are_state_consistent():
         ref_state = ref_block.jax_zero_external_loads(ref_state, np.float64(0.2))
     ref_block.jax_set_state(ref_state)
     ref_block.from_device(
-        attrs=(
+        variables=(
             "position_collection",
             "director_collection",
             "lengths",
@@ -299,7 +316,7 @@ def test_memory_block_cosserat_rod_jax_kinematic_update_matches_numba():
             )
         )
     block.from_device(
-        attrs=("position_collection", "director_collection"), update_rods=False
+        variables=("position_collection", "director_collection"), update_rods=False
     )
 
     assert_allclose(
@@ -344,7 +361,7 @@ def test_memory_block_cosserat_rod_jax_dynamic_update_matches_numba():
             )
         )
     block.from_device(
-        attrs=(
+        variables=(
             "acceleration_collection",
             "alpha_collection",
             "velocity_collection",
@@ -417,7 +434,7 @@ def test_memory_block_cosserat_rod_jax_update_accelerations_matches_numba():
             )
         )
     block.from_device(
-        attrs=("acceleration_collection", "alpha_collection"), update_rods=False
+        variables=("acceleration_collection", "alpha_collection"), update_rods=False
     )
 
     assert_allclose(
@@ -442,7 +459,7 @@ def test_memory_block_cosserat_rod_jax_zero_external_loads():
         block.jax_set_state(
             block.jax_zero_external_loads(block.jax_get_state(), np.float64(0.0))
         )
-    block.from_device(attrs=("external_forces", "external_torques"), update_rods=False)
+    block.from_device(variables=("external_forces", "external_torques"), update_rods=False)
 
     assert_array_equal(block.external_forces, np.zeros_like(block.external_forces))
     assert_array_equal(block.external_torques, np.zeros_like(block.external_torques))
@@ -512,7 +529,7 @@ def test_memory_block_cosserat_rod_jax_internal_forces_and_torques_match_numba()
             )
         )
     block.from_device(
-        attrs=(
+        variables=(
             "lengths",
             "tangents",
             "radius",

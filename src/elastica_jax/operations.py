@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodView,
-    MemoryBlockCosseratRodJax,
+    _CosseratRodMemoryBlock,
 )
 
 JAXTime: TypeAlias = np.float64
@@ -218,7 +218,7 @@ class GravityAnalyticalDamperJax(NoOpsJax):
         damping_constant: float | None = None,
         translational_damping_constant: float | None = None,
         rotational_damping_constant: float | None = None,
-        _system: MemoryBlockCosseratRodJax,
+        _system: _CosseratRodMemoryBlock,
     ) -> None:
         if acc_gravity is None:
             acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)

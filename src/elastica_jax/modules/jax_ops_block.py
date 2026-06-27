@@ -6,11 +6,15 @@ from typing import Any, Type
 from elastica_jax.block_operation import NoBlockOpJax
 from elastica_jax.operations import NoOpsJax
 from elastica_jax.memory_block.memory_block_rod_jax import (
+    _CosseratRodMemoryBlock,
     _ELEMENT_ATTRS,
     _NODE_ATTRS,
     _SYNCABLE_ATTRS,
     _VORONOI_ATTRS,
-    MemoryBlockCosseratRodJax,
+)
+from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
+    _ShardedCosseratRodBlock,
+    is_sharded_block_state,
 )
 import jax
 import jax.numpy as jnp
@@ -138,16 +142,16 @@ class JAXOpsBlock(SystemCollectionProtocol):
         end_idx: np.ndarray,
     ) -> np.ndarray:
         widths = end_idx - start_idx
-        assert np.all(
-            widths == widths[0]
-        ), "Per-rod JAX block operators require uniform discretization across rods."
+        assert np.all(widths == widths[0]), (
+            "Per-rod JAX block operators require uniform discretization across rods."
+        )
         offsets = np.arange(int(widths[0]), dtype=np.int32)
         return start_idx[:, None].astype(np.int32) + offsets[None, :]
 
     @classmethod
     def _per_rod_indices(
         cls,
-        block_system: MemoryBlockCosseratRodJax,
+        block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
     ) -> dict[str, jax.Array]:
         return {
             "node": jnp.asarray(
@@ -197,7 +201,7 @@ class JAXOpsBlock(SystemCollectionProtocol):
         cls,
         *,
         block_state_idx: int,
-        block_system: MemoryBlockCosseratRodJax,
+        block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
         operator: Any,
     ):
         indices = cls._per_rod_indices(block_system)
@@ -210,8 +214,12 @@ class JAXOpsBlock(SystemCollectionProtocol):
 
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             block_state = states[block_state_idx]
+            working_state = block_state
+            if is_sharded_block_state(block_state):
+                assert isinstance(block_system, _ShardedCosseratRodBlock)
+                working_state = block_system.merge_shard_states(block_state)
             local_state = {
-                attr: cls._gather_attr(block_state[attr], indices[attr_domains[attr]])
+                attr: cls._gather_attr(working_state[attr], indices[attr_domains[attr]])
                 for attr in attrs
             }
 
@@ -225,13 +233,19 @@ class JAXOpsBlock(SystemCollectionProtocol):
                 return rod_view.commit()
 
             updated_local_state = jax.vmap(single_apply)(local_state)
-            updated_block_state = dict(block_state)
+            updated_block_state = dict(working_state)
             for attr in attrs:
                 updated_block_state[attr] = cls._scatter_attr(
-                    block_state[attr],
+                    working_state[attr],
                     indices[attr_domains[attr]],
                     updated_local_state[attr],
                 )
+            if is_sharded_block_state(block_state):
+                updated_block_state = block_system.scatter_merged_state(
+                    updated_block_state, block_state
+                )
+            else:
+                updated_block_state = updated_block_state
             updated_states = list(states)
             updated_states[block_state_idx] = updated_block_state
             return tuple(updated_states)
@@ -361,10 +375,18 @@ class JAXOpsBlock(SystemCollectionProtocol):
     @staticmethod
     def _find_target_block(final_systems, target_type):  # type: ignore[no-untyped-def]
         for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, MemoryBlockCosseratRodJax):
+            if not isinstance(
+                system, (_CosseratRodMemoryBlock, _ShardedCosseratRodBlock)
+            ):
                 continue
             if isinstance(system, target_type):
                 return block_state_idx, system
+            if isinstance(system, _ShardedCosseratRodBlock):
+                if (
+                    target_type is _CosseratRodMemoryBlock
+                    or target_type is _ShardedCosseratRodBlock
+                ):
+                    return block_state_idx, system
             if any(isinstance(subsystem, target_type) for subsystem in system._systems):
                 return block_state_idx, system
         raise RuntimeError(
