@@ -114,6 +114,30 @@ def test_sharded_scatter_merged_state_returns_shard_local_devices() -> None:
         )
 
 
+def test_sharded_merge_scatter_roundtrip_preserves_array_shapes() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
+    block = _make_two_rod_block(mesh)
+    state = block.jax_get_state()
+    merged = block.merge_shard_states(state)
+    scattered = block.scatter_merged_state(merged, state)
+    shape_keys = (
+        "mass",
+        "position_collection",
+        "external_forces",
+        "external_torques",
+        "director_collection",
+        "dilatation",
+        "kappa",
+    )
+    for shard_index, shard_state in enumerate(scattered["shards"]):
+        original = state["shards"][shard_index]
+        for key in shape_keys:
+            assert shard_state[key].shape == original[key].shape, key
+
+
 def test_wrap_jax_block_operator_handles_sharded_state() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:

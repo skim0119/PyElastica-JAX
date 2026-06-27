@@ -12,12 +12,51 @@ import numpy as np
 from elastica_jax.execution_mesh import ExecutionMesh
 from elastica_jax.memory_block.memory_block_rod_jax import (
     _CosseratRodMemoryBlock,
+    _ELEMENT_ATTRS,
+    _NODE_ATTRS,
     _SYNCABLE_ATTRS,
+    _VORONOI_ATTRS,
 )
 from elastica.typing import RodType, SystemIdxType
 
 SHARDED_STATE_KEY = "_eaj_sharded_state"
 CONTACT_STATE_KEY_PREFIX = "capsule_contact_"
+_ATTR_DOMAINS: dict[str, str] = (
+    {attr: "node" for attr in _NODE_ATTRS}
+    | {attr: "element" for attr in _ELEMENT_ATTRS}
+    | {attr: "voronoi" for attr in _VORONOI_ATTRS}
+)
+
+
+def _slice_merged_array_for_shard(
+    *,
+    key: str,
+    value: jax.Array,
+    current: jax.Array,
+    node_offset: int,
+    node_count: int,
+    elem_offset: int,
+    elem_count: int,
+    voronoi_offset: int,
+    voronoi_count: int,
+) -> jax.Array:
+    domain = _ATTR_DOMAINS[key]
+    if domain == "node":
+        offset, count = node_offset, node_count
+    elif domain == "element":
+        offset, count = elem_offset, elem_count
+    else:
+        offset, count = voronoi_offset, voronoi_count
+
+    if current.ndim == 1:
+        return value[offset : offset + count]
+    if current.ndim == 2:
+        return value[:, offset : offset + count]
+    if current.ndim == 3:
+        return value[:, :, offset : offset + count]
+    raise ValueError(
+        f"Unsupported rank {current.ndim} for sharded state key {key!r}."
+    )
 
 
 def is_sharded_block_state(state: dict[str, Any]) -> bool:
@@ -353,12 +392,14 @@ class _ShardedCosseratRodBlock:
         scattered_shards = []
         node_offset = 0
         elem_offset = 0
+        voronoi_offset = 0
         for shard_index, (block, shard_state) in enumerate(
             zip(self._shard_blocks, state["shards"])
         ):
             updated = dict(shard_state)
             node_count = block.n_nodes
             elem_count = block.n_elems
+            voronoi_count = block.n_voronoi
             shard_device = block._initial_device
             for key, value in merged.items():
                 if key not in shard_state and not key.startswith(
@@ -370,14 +411,23 @@ class _ShardedCosseratRodBlock:
                         updated[key] = jax.device_put(value, device=shard_device)
                     continue
                 current = shard_state[key]
-                if current.ndim == 1:
-                    shard_value = value[node_offset : node_offset + node_count]
-                elif current.ndim == 2:
-                    shard_value = value[:, node_offset : node_offset + node_count]
-                else:
-                    shard_value = value[:, :, elem_offset : elem_offset + elem_count]
+                assert key in _ATTR_DOMAINS, (
+                    f"Cannot scatter unknown sharded state key {key!r}."
+                )
+                shard_value = _slice_merged_array_for_shard(
+                    key=key,
+                    value=value,
+                    current=current,
+                    node_offset=node_offset,
+                    node_count=node_count,
+                    elem_offset=elem_offset,
+                    elem_count=elem_count,
+                    voronoi_offset=voronoi_offset,
+                    voronoi_count=voronoi_count,
+                )
                 updated[key] = jax.device_put(shard_value, device=shard_device)
             scattered_shards.append(updated)
             node_offset += node_count
             elem_offset += elem_count
+            voronoi_offset += voronoi_count
         return {SHARDED_STATE_KEY: True, "shards": tuple(scattered_shards)}
