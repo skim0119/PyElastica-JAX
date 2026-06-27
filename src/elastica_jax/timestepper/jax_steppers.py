@@ -7,10 +7,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..memory_block.sharded_cosserat_rod_jax import is_sharded_block_state
 from ..protocol import JAXBlock, JAXSystems, JAXPyTree
 
 
-class PositionVerletGPU:
+class PositionVerletJAX:
     """Dedicated Position Verlet integrator for device-backed systems."""
 
     def __init__(self) -> None:
@@ -111,6 +112,14 @@ class PositionVerletGPU:
         if hasattr(first_system, "position_collection_device"):
             return first_system.position_collection_device.device
 
+        first_state = states[0]
+        if isinstance(first_state, dict) and is_sharded_block_state(first_state):
+            for leaf in jax.tree_util.tree_leaves(first_state["shards"][0]):
+                if hasattr(leaf, "devices"):
+                    return next(iter(leaf.devices()))
+                if hasattr(leaf, "device"):
+                    return leaf.device
+
         for leaf in jax.tree_util.tree_leaves(states):
             if hasattr(leaf, "devices"):
                 return next(iter(leaf.devices()))
@@ -123,6 +132,11 @@ class PositionVerletGPU:
     def _reference_dtype_from_states(
         states: tuple[JAXPyTree, ...],
     ) -> np.dtype:
+        first_state = states[0]
+        if isinstance(first_state, dict) and is_sharded_block_state(first_state):
+            for leaf in jax.tree_util.tree_leaves(first_state["shards"][0]):
+                if hasattr(leaf, "dtype"):
+                    return np.dtype(leaf.dtype)
         for leaf in jax.tree_util.tree_leaves(states):
             if hasattr(leaf, "dtype"):
                 return np.dtype(leaf.dtype)
@@ -146,9 +160,9 @@ class PositionVerletGPU:
         simulation_dt = np.float64(dt)
         duration = float(target_time - simulation_time)
         n_steps = int(np.round(duration / float(simulation_dt)))
-        assert np.isclose(
-            simulation_time + n_steps * simulation_dt, target_time
-        ), "final_time - time must be an integer multiple of dt."
+        assert np.isclose(simulation_time + n_steps * simulation_dt, target_time), (
+            "final_time - time must be an integer multiple of dt."
+        )
 
         systems = tuple(SystemCollection.final_systems())
         states = tuple(system.jax_get_state() for system in systems)

@@ -15,11 +15,3 @@ repos:
         exclude: LICENSE
       - id: check-added-large-files
       - id: mixed-line-ending
-
-  - repo: local
-    hooks:
-      - id: formatting
-        name: formatting
-        entry: make formatting
-        types: [python]
-        language: system

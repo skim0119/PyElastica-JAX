@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from elastica.timestepper.gpu_steppers import PositionVerletGPU
+from elastica.timestepper.jax_steppers import PositionVerletJAX
 
 
 class FakeJAXBlock:
@@ -72,7 +72,7 @@ class FakeJAXCollection:
 def test_position_verlet_gpu_integrate_uses_fori_loop_protocol():
     system = FakeJAXBlock()
     collection = FakeJAXCollection(system)
-    stepper = PositionVerletGPU()
+    stepper = PositionVerletJAX()
 
     with jax.default_device(jax.devices("cpu")[0]):
         final_time = stepper.integrate(
@@ -94,7 +94,7 @@ def test_position_verlet_gpu_integrate_handles_multiple_systems():
     system_one = FakeJAXBlock()
     system_two = FakeJAXBlock()
     collection = FakeJAXCollection(system_one, system_two)
-    stepper = PositionVerletGPU()
+    stepper = PositionVerletJAX()
 
     with jax.default_device(jax.devices("cpu")[0]):
         final_time = stepper.integrate(
@@ -110,7 +110,7 @@ def test_position_verlet_gpu_integrate_handles_multiple_systems():
 
 
 def test_position_verlet_gpu_integrate_rejects_nonpositive_dt():
-    stepper = PositionVerletGPU()
+    stepper = PositionVerletJAX()
     collection = FakeJAXCollection(FakeJAXBlock())
 
     with pytest.raises(AssertionError):
@@ -123,7 +123,7 @@ def test_position_verlet_gpu_integrate_rejects_nonpositive_dt():
 
 
 def test_position_verlet_gpu_integrate_rejects_inconsistent_final_time():
-    stepper = PositionVerletGPU()
+    stepper = PositionVerletJAX()
     collection = FakeJAXCollection(FakeJAXBlock())
 
     with pytest.raises(AssertionError):

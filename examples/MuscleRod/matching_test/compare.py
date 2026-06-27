@@ -25,11 +25,11 @@ from old_impl_batch_muscle import BatchMuscle, ApplyMuscleActuations
 from memory_block_muscle_rods_jax import muscle_block_with
 from muscle_rod import MuscleArm, MuscleConfig
 
-N_TM = 3
-N_LM = 3
-N_OM = 5
-N_ELEMENTS = 1000
-FINAL_TIME = 5.0
+N_TM = 1
+N_LM = 4
+N_OM = 6
+N_ELEMENTS = 50
+FINAL_TIME = 2.0
 TIME_STEP = 1.0e-4
 ACTIVATION_FREQUENCY = 1.0
 
@@ -65,6 +65,10 @@ def make_rod() -> CosseratRod:
     )
 
 
+def force_length_weight(normalized_length: np.ndarray) -> np.ndarray:
+    return np.maximum(0.0, 1.0 - 5.0 * (normalized_length - 1.0) ** 2)
+
+
 def make_muscle_rod(batch_muscle) -> MuscleArm:
     base_length = 0.5
     radius_base = 0.012
@@ -72,7 +76,12 @@ def make_muscle_rod(batch_muscle) -> MuscleArm:
     radius = np.linspace(radius_base, radius_tip, N_ELEMENTS + 1)
     radius_mean = (radius[:-1] + radius[1:]) / 2
 
-    muscle_config = MuscleConfig.from_batch_muscle(batch_muscle)
+    muscle_config = MuscleConfig.from_batch_muscle(
+        batch_muscle,
+        activation_offset=0.5,
+        activation_amplitude=0.5,
+        activation_frequency=ACTIVATION_FREQUENCY,
+    )
 
     arm = MuscleArm.straight_rod(
         n_elements=N_ELEMENTS,
@@ -117,7 +126,9 @@ def build_batch_muscle(
     rod: CosseratRod,
     params: dict,
 ) -> tuple[BatchMuscle, list[np.ndarray]]:
-    batch = BatchMuscle(num_elements=rod.n_elems)
+    batch = BatchMuscle(num_elements=rod.n_elems).configure(
+        force_length_weight=force_length_weight
+    )
     activations: list[np.ndarray] = []
 
     for _ in range(N_TM):
@@ -221,7 +232,7 @@ def run_jax_simulation(
     )
 
     simulator.finalize()
-    stepper = eaj.PositionVerletGPU()
+    stepper = eaj.PositionVerletJAX()
     total_steps = int(FINAL_TIME / TIME_STEP)
 
     # Run
@@ -239,7 +250,7 @@ def run_jax_simulation(
     tip_position = muscle_rod.position_collection[:, -1].copy()
 
     # Return
-    print(f"COOMM: {elapsed:8.3f} s  ({total_steps / elapsed:,.0f} steps/s)")
+    print(f"JAX:   {elapsed:8.3f} s  ({total_steps / elapsed:,.0f} steps/s)")
     return elapsed, tip_position
 
 

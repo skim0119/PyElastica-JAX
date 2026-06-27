@@ -78,7 +78,7 @@ def main() -> None:
     simulator.using(arm).operate(ea.OneEndFixedJax)
     simulator.finalize()
 
-    stepper = ea.PositionVerletGPU()
+    stepper = ea.PositionVerletJAX()
     final_time = stepper.integrate(
         simulator,
         time=np.float64(0.0),

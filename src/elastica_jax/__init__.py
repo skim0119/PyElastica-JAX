@@ -3,7 +3,7 @@ from elastica_jax.modules.jax_ops_block import JAXOpsBlock
 from elastica_jax.modules.jax_ops_rod_rod_block import JAXRodRodBlockOps
 from elastica_jax.modules.jax_ops_rod_rigid_body import JAXOpsRodRigidBody
 
-from elastica_jax.timestepper.gpu_steppers import PositionVerletGPU
+from elastica_jax.timestepper.jax_steppers import PositionVerletJAX
 from elastica_jax.memory_block.memory_block_rigid_body_jax import (
     MemoryBlockRigidBodyJax,
 )
