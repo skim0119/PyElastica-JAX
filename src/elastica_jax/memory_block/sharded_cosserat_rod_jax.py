@@ -359,6 +359,7 @@ class _ShardedCosseratRodBlock:
             updated = dict(shard_state)
             node_count = block.n_nodes
             elem_count = block.n_elems
+            shard_device = block._initial_device
             for key, value in merged.items():
                 if key not in shard_state and not key.startswith(
                     CONTACT_STATE_KEY_PREFIX
@@ -366,15 +367,16 @@ class _ShardedCosseratRodBlock:
                     continue
                 if key.startswith(CONTACT_STATE_KEY_PREFIX):
                     if shard_index == 0:
-                        updated[key] = value
+                        updated[key] = jax.device_put(value, device=shard_device)
                     continue
                 current = shard_state[key]
                 if current.ndim == 1:
-                    updated[key] = value[node_offset : node_offset + node_count]
+                    shard_value = value[node_offset : node_offset + node_count]
                 elif current.ndim == 2:
-                    updated[key] = value[:, node_offset : node_offset + node_count]
+                    shard_value = value[:, node_offset : node_offset + node_count]
                 else:
-                    updated[key] = value[:, :, elem_offset : elem_offset + elem_count]
+                    shard_value = value[:, :, elem_offset : elem_offset + elem_count]
+                updated[key] = jax.device_put(shard_value, device=shard_device)
             scattered_shards.append(updated)
             node_offset += node_count
             elem_offset += elem_count

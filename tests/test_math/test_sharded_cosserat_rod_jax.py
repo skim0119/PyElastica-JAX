@@ -98,6 +98,46 @@ def test_sharded_merge_shard_states_concatenates_on_primary_device() -> None:
     assert merged["position_collection"].shape == block.position_collection.shape
 
 
+def test_sharded_scatter_merged_state_returns_shard_local_devices() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
+    block = _make_two_rod_block(mesh)
+    state = block.jax_get_state()
+    merged = block.merge_shard_states(state)
+    scattered = block.scatter_merged_state(merged, state)
+    for shard_index, shard_state in enumerate(scattered["shards"]):
+        assert (
+            shard_state["position_collection"].devices()
+            == state["shards"][shard_index]["position_collection"].devices()
+        )
+
+
+def test_wrap_jax_block_operator_handles_sharded_state() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+    from elastica_jax.modules.jax_ops_block import JAXOpsBlock
+
+    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
+    block = _make_two_rod_block(mesh)
+    state = block.jax_get_state()
+
+    def identity_operator(merged_state, time):
+        del time
+        assert "director_collection" in merged_state
+        return merged_state
+
+    wrapped = JAXOpsBlock._wrap_jax_block_operator(
+        block_state_idx=0,
+        block_system=block,
+        operator=identity_operator,
+    )
+    updated = wrapped(states=(state,), time=np.float64(0.0))
+    assert eaj.is_sharded_block_state(updated[0])
+
+
 def test_sharded_block_exposes_global_rest_lengths_view() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:

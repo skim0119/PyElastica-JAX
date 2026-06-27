@@ -13,6 +13,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     _VORONOI_ATTRS,
 )
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
+    SHARDED_STATE_KEY,
     _ShardedCosseratRodBlock,
     is_sharded_block_state,
 )
@@ -125,11 +126,20 @@ class JAXOpsBlock(SystemCollectionProtocol):
         cls,
         *,
         block_state_idx: int,
+        block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
         operator: Any,
     ):
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             block_state = states[block_state_idx]
-            updated_state = operator(block_state, time)
+            if is_sharded_block_state(block_state):
+                assert isinstance(block_system, _ShardedCosseratRodBlock)
+                merged = block_system.merge_shard_states(block_state)
+                updated_state = block_system.scatter_merged_state(
+                    operator(merged, time),
+                    block_state,
+                )
+            else:
+                updated_state = operator(block_state, time)
             updated_states = list(states)
             updated_states[block_state_idx] = updated_state
             return tuple(updated_states)
@@ -197,42 +207,53 @@ class JAXOpsBlock(SystemCollectionProtocol):
         raise ValueError(f"Unsupported array rank {array.ndim} for per-rod batching.")
 
     @classmethod
-    def _wrap_jax_per_rod_operator(
+    def _apply_per_rod_operator_to_block_state(
         cls,
         *,
-        block_state_idx: int,
         block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
-        operator: Any,
-    ):
-        indices = cls._per_rod_indices(block_system)
+        block_state: dict[str, Any],
+        operators: Any | tuple[Any, ...],
+        time: Any,
+    ) -> dict[str, Any]:
         attr_domains = (
             {attr: "node" for attr in _NODE_ATTRS}
             | {attr: "element" for attr in _ELEMENT_ATTRS}
             | {attr: "voronoi" for attr in _VORONOI_ATTRS}
         )
         attrs = tuple(_SYNCABLE_ATTRS)
+        operator_list = (operators,) if not isinstance(operators, tuple) else operators
 
-        def apply(*, states, time):  # type: ignore[no-untyped-def]
-            block_state = states[block_state_idx]
-            working_state = block_state
-            if is_sharded_block_state(block_state):
-                assert isinstance(block_system, _ShardedCosseratRodBlock)
-                working_state = block_system.merge_shard_states(block_state)
+        def commit_view(updated_view: Any, rod_view: _PerRodStateView) -> dict[str, Any]:
+            if isinstance(updated_view, _PerRodStateView):
+                return updated_view.commit()
+            if hasattr(updated_view, "commit"):
+                return updated_view.commit()
+            return rod_view.commit()
+
+        def apply_to_working_state(
+            working_state: dict[str, Any],
+            indices: dict[str, jax.Array],
+            *,
+            per_rod_operators: tuple[Any, ...],
+        ) -> dict[str, Any]:
             local_state = {
-                attr: cls._gather_attr(working_state[attr], indices[attr_domains[attr]])
+                attr: cls._gather_attr(
+                    working_state[attr], indices[attr_domains[attr]]
+                )
                 for attr in attrs
             }
-
-            def single_apply(single_state):  # type: ignore[no-untyped-def]
+            updated_rods: list[dict[str, Any]] = []
+            for rod_index, operator in enumerate(per_rod_operators):
+                single_state = {
+                    attr: local_state[attr][rod_index] for attr in attrs
+                }
                 rod_view = _PerRodStateView(single_state)
                 updated_view = operator(rod_view, time)
-                if isinstance(updated_view, _PerRodStateView):
-                    return updated_view.commit()
-                if hasattr(updated_view, "commit"):
-                    return updated_view.commit()
-                return rod_view.commit()
-
-            updated_local_state = jax.vmap(single_apply)(local_state)
+                updated_rods.append(commit_view(updated_view, rod_view))
+            updated_local_state = {
+                attr: jnp.stack([rod[attr] for rod in updated_rods], axis=0)
+                for attr in attrs
+            }
             updated_block_state = dict(working_state)
             for attr in attrs:
                 updated_block_state[attr] = cls._scatter_attr(
@@ -240,12 +261,52 @@ class JAXOpsBlock(SystemCollectionProtocol):
                     indices[attr_domains[attr]],
                     updated_local_state[attr],
                 )
-            if is_sharded_block_state(block_state):
-                updated_block_state = block_system.scatter_merged_state(
-                    updated_block_state, block_state
+            return updated_block_state
+
+        if is_sharded_block_state(block_state):
+            assert isinstance(block_system, _ShardedCosseratRodBlock)
+            updated_shards = []
+            rod_offset = 0
+            for inner_block, shard_state in zip(
+                block_system._shard_blocks, block_state["shards"]
+            ):
+                shard_operators = operator_list[
+                    rod_offset : rod_offset + inner_block.n_rods
+                ]
+                shard_indices = cls._per_rod_indices(inner_block)
+                updated_shards.append(
+                    apply_to_working_state(
+                        shard_state,
+                        shard_indices,
+                        per_rod_operators=shard_operators,
+                    )
                 )
-            else:
-                updated_block_state = updated_block_state
+                rod_offset += inner_block.n_rods
+            return {SHARDED_STATE_KEY: True, "shards": tuple(updated_shards)}
+
+        indices = cls._per_rod_indices(block_system)
+        return apply_to_working_state(
+            block_state,
+            indices,
+            per_rod_operators=operator_list,
+        )
+
+    @classmethod
+    def _wrap_jax_per_rod_operator(
+        cls,
+        *,
+        block_state_idx: int,
+        block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
+        operators: Any | tuple[Any, ...],
+    ):
+        def apply(*, states, time):  # type: ignore[no-untyped-def]
+            block_state = states[block_state_idx]
+            updated_block_state = cls._apply_per_rod_operator_to_block_state(
+                block_system=block_system,
+                block_state=block_state,
+                operators=operators,
+                time=time,
+            )
             updated_states = list(states)
             updated_states[block_state_idx] = updated_block_state
             return tuple(updated_states)
@@ -305,7 +366,12 @@ class JAXOpsBlock(SystemCollectionProtocol):
             )
 
             instantiate_target = block_system
+            per_rod_operators: tuple[Any, ...] | None = None
             if instantiate_with_representative_rod:
+                per_rod_operators = tuple(
+                    jax_op.instantiate(block_system._systems[rod_index])
+                    for rod_index in range(block_system.n_rods)
+                )
                 instantiate_target = block_system._systems[0]
             op_instance = jax_op.instantiate(instantiate_target)
 
@@ -330,6 +396,7 @@ class JAXOpsBlock(SystemCollectionProtocol):
                 if has_block:
                     wrapped = self._wrap_jax_block_operator(
                         block_state_idx=block_state_idx,
+                        block_system=block_system,
                         operator=getattr(op_instance, block_method_name),
                     )
                     staged_wrappers.append((stage, wrapped))
@@ -339,10 +406,17 @@ class JAXOpsBlock(SystemCollectionProtocol):
                     method_name = (
                         per_rod_method_name if has_per_rod else legacy_method_name
                     )
+                    operators: Any | tuple[Any, ...]
+                    if has_legacy and per_rod_operators is not None:
+                        operators = tuple(
+                            getattr(op, method_name) for op in per_rod_operators
+                        )
+                    else:
+                        operators = getattr(op_instance, method_name)
                     wrapped = self._wrap_jax_per_rod_operator(
                         block_state_idx=block_state_idx,
                         block_system=block_system,
-                        operator=getattr(op_instance, method_name),
+                        operators=operators,
                     )
                     staged_wrappers.append((stage, wrapped))
 
