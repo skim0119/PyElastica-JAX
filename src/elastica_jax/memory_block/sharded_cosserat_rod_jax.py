@@ -10,7 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from elastica_jax.execution_mesh import ExecutionMesh
-from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
+from elastica_jax.memory_block.memory_block_rod_jax import (
+    _CosseratRodMemoryBlock,
+    _SYNCABLE_ATTRS,
+)
 from elastica.typing import RodType, SystemIdxType
 
 SHARDED_STATE_KEY = "_eaj_sharded_state"
@@ -182,32 +185,24 @@ class _ShardedCosseratRodBlock:
         self.end_idx_in_rod_voronoi = block.end_idx_in_rod_voronoi
         self.ring_rod_flag = block.ring_rod_flag
 
-    @property
-    def mass(self) -> np.ndarray:
-        if not self.mesh.is_sharded:
-            return self._primary_block.mass
-        return np.concatenate([block.mass for block in self._shard_blocks])
+    def __getattr__(self, attr: str) -> np.ndarray:
+        if attr not in _SYNCABLE_ATTRS:
+            raise AttributeError(attr)
+        return self._get_syncable_attr(attr)
 
-    @property
-    def inv_mass_second_moment_of_inertia(self) -> np.ndarray:
+    def _get_syncable_attr(self, attr: str) -> np.ndarray:
         if not self.mesh.is_sharded:
-            return self._primary_block.inv_mass_second_moment_of_inertia
-        return np.concatenate(
-            [block.inv_mass_second_moment_of_inertia for block in self._shard_blocks],
-            axis=2,
+            return getattr(self._primary_block, attr)
+        chunks = [getattr(block, attr) for block in self._shard_blocks]
+        if chunks[0].ndim == 1:
+            return np.concatenate(chunks, axis=0)
+        if chunks[0].ndim == 2:
+            return np.concatenate(chunks, axis=1)
+        if chunks[0].ndim == 3:
+            return np.concatenate(chunks, axis=2)
+        raise ValueError(
+            f"Unsupported rank {chunks[0].ndim} for syncable attribute {attr!r}."
         )
-
-    @property
-    def radius(self) -> np.ndarray:
-        if not self.mesh.is_sharded:
-            return self._primary_block.radius
-        return np.concatenate([block.radius for block in self._shard_blocks])
-
-    @property
-    def lengths(self) -> np.ndarray:
-        if not self.mesh.is_sharded:
-            return self._primary_block.lengths
-        return np.concatenate([block.lengths for block in self._shard_blocks])
 
     def _concatenate_rod_index_array(self, attr: str) -> np.ndarray:
         chunks = []
@@ -267,7 +262,7 @@ class _ShardedCosseratRodBlock:
     def jax_kinematic_step(
         self, state: dict[str, Any], time: np.float64, prefac: np.float64
     ) -> dict[str, Any]:
-        if not is_sharded_block_state(state):
+        if not self.mesh.is_sharded:
             return self._primary_block.jax_kinematic_step(state, time, prefac)
         return {
             SHARDED_STATE_KEY: True,
@@ -277,7 +272,7 @@ class _ShardedCosseratRodBlock:
     def jax_compute_internal_forces_and_torques(
         self, state: dict[str, Any], time: np.float64
     ) -> dict[str, Any]:
-        if not is_sharded_block_state(state):
+        if not self.mesh.is_sharded:
             return self._primary_block.jax_compute_internal_forces_and_torques(
                 state, time
             )
@@ -291,7 +286,7 @@ class _ShardedCosseratRodBlock:
     def jax_dynamic_step(
         self, state: dict[str, Any], time: np.float64, dt: np.float64
     ) -> dict[str, Any]:
-        if not is_sharded_block_state(state):
+        if not self.mesh.is_sharded:
             return self._primary_block.jax_dynamic_step(state, time, dt)
         return {
             SHARDED_STATE_KEY: True,
@@ -301,7 +296,7 @@ class _ShardedCosseratRodBlock:
     def jax_zero_external_loads(
         self, state: dict[str, Any], time: np.float64
     ) -> dict[str, Any]:
-        if not is_sharded_block_state(state):
+        if not self.mesh.is_sharded:
             return self._primary_block.jax_zero_external_loads(state, time)
         return {
             SHARDED_STATE_KEY: True,
