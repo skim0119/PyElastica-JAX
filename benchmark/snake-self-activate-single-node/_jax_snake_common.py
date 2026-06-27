@@ -521,6 +521,31 @@ def snake_start(index: int, spacing: float) -> np.ndarray:
     return np.array([index * spacing, 0.0, 0.0], dtype=np.float64)
 
 
+def two_gpu_half_split_mesh(n_snakes: int) -> eaj.ExecutionMesh:
+    """Map the first half of snakes to GPU 0 and the remainder to GPU 1."""
+    assert n_snakes >= 2, "gpu2x requires at least two snakes."
+    devices = eaj.resolve_backend_devices("cuda")
+    assert len(devices) >= 2, "gpu2x requires at least two CUDA devices."
+    split = n_snakes // 2
+    rod_to_shard = np.array(
+        [0] * split + [1] * (n_snakes - split),
+        dtype=np.int32,
+    )
+    return eaj.ExecutionMesh(devices=devices[:2], rod_to_shard=rod_to_shard)
+
+
+def _block_until_ready_rod_block(
+    rod_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+) -> None:
+    shard_blocks = getattr(rod_block, "_shard_blocks", None)
+    mesh = getattr(rod_block, "mesh", None)
+    if shard_blocks is not None and mesh is not None and mesh.is_sharded:
+        for shard_block in shard_blocks:
+            jax.block_until_ready(shard_block)
+        return
+    jax.block_until_ready(rod_block)
+
+
 def build_cpu_sim(
     *,
     n_snakes: int,
@@ -613,6 +638,76 @@ def build_jax_sim(
     time_step: float = DEFAULT_DT,
     include_external_loads: bool = True,
 ) -> tuple[MultiSnakeJAXBlockSimulator, eaj._CosseratRodMemoryBlock]:
+    rod_block = eaj.configure_rod_block(
+        device=device,
+        device_dtype=np.dtype(device_dtype),
+    )
+    return _build_multi_snake_jax_block_sim(
+        rod_block,
+        n_snakes=n_snakes,
+        n_elem=n_elem,
+        period=period,
+        base_length=base_length,
+        density=density,
+        youngs_modulus=youngs_modulus,
+        poisson_ratio=poisson_ratio,
+        gravitational_acc=gravitational_acc,
+        time_step=time_step,
+        include_external_loads=include_external_loads,
+    )
+
+
+def build_jax_sharded_sim(
+    *,
+    mesh: eaj.ExecutionMesh,
+    device_dtype: np.dtype,
+    n_snakes: int,
+    n_elem: int = DEFAULT_N_ELEM,
+    period: float = DEFAULT_PERIOD,
+    base_length: float = DEFAULT_BASE_LENGTH,
+    density: float = DEFAULT_DENSITY,
+    youngs_modulus: float = DEFAULT_YOUNGS_MODULUS,
+    poisson_ratio: float = DEFAULT_POISSON_RATIO,
+    gravitational_acc: float = DEFAULT_GRAVITY,
+    time_step: float = DEFAULT_DT,
+    include_external_loads: bool = True,
+) -> tuple[MultiSnakeJAXBlockSimulator, eaj._ShardedCosseratRodBlock]:
+    rod_block = eaj.configure_rod_block_sharded(
+        mesh=mesh,
+        device_dtype=np.dtype(device_dtype),
+    )
+    return _build_multi_snake_jax_block_sim(
+        rod_block,
+        n_snakes=n_snakes,
+        n_elem=n_elem,
+        period=period,
+        base_length=base_length,
+        density=density,
+        youngs_modulus=youngs_modulus,
+        poisson_ratio=poisson_ratio,
+        gravitational_acc=gravitational_acc,
+        time_step=time_step,
+        include_external_loads=include_external_loads,
+    )
+
+
+def _build_multi_snake_jax_block_sim(
+    rod_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+    *,
+    n_snakes: int,
+    n_elem: int,
+    period: float,
+    base_length: float,
+    density: float,
+    youngs_modulus: float,
+    poisson_ratio: float,
+    gravitational_acc: float,
+    time_step: float,
+    include_external_loads: bool,
+) -> tuple[
+    MultiSnakeJAXBlockSimulator,
+    eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+]:
     b_coeff = default_b_coeff()
     mu = base_length / (period * period * np.abs(gravitational_acc) * DEFAULT_FROUDE)
     kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
@@ -620,10 +715,6 @@ def build_jax_sim(
     spacing = 1.5 * base_length
 
     sim = MultiSnakeJAXBlockSimulator()
-    rod_block = eaj.configure_rod_block(
-        device=device,
-        device_dtype=np.dtype(device_dtype),
-    )
     sim.enable_block_supports(ea.CosseratRod, rod_block)
     for idx in range(n_snakes):
         rod = build_rod(
@@ -757,6 +848,46 @@ def run_pyelastica_rollout(
     return instantiate_seconds, rollout_seconds
 
 
+def _integrate_jax_block_rollout(
+    jax_sim: MultiSnakeJAXBlockSimulator,
+    jax_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+    *,
+    steps: int,
+    dt: float,
+    warmup_runs: int,
+    transfer_guard: str,
+) -> float:
+    dt_value = np.float64(dt)
+    final_time = np.float64(steps * dt)
+    stepper = eaj.PositionVerletJAX()
+    guard_context = (
+        jax.transfer_guard(transfer_guard)
+        if transfer_guard != "allow"
+        else nullcontext()
+    )
+    with guard_context:
+        for _ in range(warmup_runs):
+            initial_state = dict(jax_block.jax_get_state())
+            stepper.integrate(
+                jax_sim,
+                time=np.float64(0.0),
+                final_time=final_time,
+                dt=dt_value,
+            )
+            _block_until_ready_rod_block(jax_block)
+            jax_block.jax_set_state(initial_state)
+
+        rollout_start = time.perf_counter()
+        stepper.integrate(
+            jax_sim,
+            time=np.float64(0.0),
+            final_time=final_time,
+            dt=dt_value,
+        )
+        _block_until_ready_rod_block(jax_block)
+        return time.perf_counter() - rollout_start
+
+
 def run_jax_rollout(
     *,
     backend: str,
@@ -768,9 +899,8 @@ def run_jax_rollout(
     dt: float = DEFAULT_DT,
     include_external_loads: bool = True,
 ) -> BenchmarkTiming:
-    """Build a JAX block simulator and time a fixed-length Position Verlet rollout."""
+    """Build a single-device JAX block simulator and time a Position Verlet rollout."""
     dt_value = np.float64(dt)
-    final_time = np.float64(steps * dt)
     dtype = np.dtype(np.float64)
     device = eaj.resolve_backend_devices(backend)[0]
 
@@ -784,35 +914,53 @@ def run_jax_rollout(
             time_step=dt,
             include_external_loads=include_external_loads,
         )
-        jax.block_until_ready(jax_block)
+        _block_until_ready_rod_block(jax_block)
         instantiate_seconds = time.perf_counter() - instantiate_start
-
-        stepper = eaj.PositionVerletJAX()
-        guard_context = (
-            jax.transfer_guard(transfer_guard)
-            if transfer_guard != "allow"
-            else nullcontext()
+        rollout_seconds = _integrate_jax_block_rollout(
+            jax_sim,
+            jax_block,
+            steps=steps,
+            dt=dt_value,
+            warmup_runs=warmup_runs,
+            transfer_guard=transfer_guard,
         )
-        with guard_context:
-            for _ in range(warmup_runs):
-                initial_state = dict(jax_block.jax_get_state())
-                stepper.integrate(
-                    jax_sim,
-                    time=np.float64(0.0),
-                    final_time=final_time,
-                    dt=dt_value,
-                )
-                jax.block_until_ready(jax_block)
-                jax_block.jax_set_state(initial_state)
 
-            rollout_start = time.perf_counter()
-            stepper.integrate(
-                jax_sim,
-                time=np.float64(0.0),
-                final_time=final_time,
-                dt=dt_value,
-            )
-            jax.block_until_ready(jax_block)
-            rollout_seconds = time.perf_counter() - rollout_start
+    return instantiate_seconds, rollout_seconds
+
+
+def run_jax_rollout_gpu2x(
+    *,
+    n_snakes: int,
+    steps: int,
+    warmup_runs: int,
+    transfer_guard: str,
+    n_elem: int = DEFAULT_N_ELEM,
+    dt: float = DEFAULT_DT,
+    include_external_loads: bool = True,
+) -> BenchmarkTiming:
+    """Build a 2-GPU sharded JAX block simulator and time a Position Verlet rollout."""
+    dt_value = np.float64(dt)
+    dtype = np.dtype(np.float64)
+    mesh = two_gpu_half_split_mesh(n_snakes)
+
+    instantiate_start = time.perf_counter()
+    jax_sim, jax_block = build_jax_sharded_sim(
+        mesh=mesh,
+        device_dtype=dtype,
+        n_snakes=n_snakes,
+        n_elem=n_elem,
+        time_step=dt,
+        include_external_loads=include_external_loads,
+    )
+    _block_until_ready_rod_block(jax_block)
+    instantiate_seconds = time.perf_counter() - instantiate_start
+    rollout_seconds = _integrate_jax_block_rollout(
+        jax_sim,
+        jax_block,
+        steps=steps,
+        dt=dt_value,
+        warmup_runs=warmup_runs,
+        transfer_guard=transfer_guard,
+    )
 
     return instantiate_seconds, rollout_seconds

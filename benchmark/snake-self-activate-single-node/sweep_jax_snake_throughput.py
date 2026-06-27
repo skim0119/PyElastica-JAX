@@ -84,6 +84,8 @@ def _export_scaling_plot(
 @click.option("--cuda-max-exp", type=int, default=14, show_default=True)
 @click.option("--cpu-min-exp", type=int, default=6, show_default=True)
 @click.option("--cpu-max-exp", type=int, default=12, show_default=True)
+@click.option("--gpu2x-min-exp", type=int, default=6, show_default=True)
+@click.option("--gpu2x-max-exp", type=int, default=14, show_default=True)
 @click.option("--pyelastica-min-exp", type=int, default=6, show_default=True)
 @click.option("--pyelastica-max-exp", type=int, default=12, show_default=True)
 @click.option("--no-external-loads", is_flag=True)
@@ -105,6 +107,7 @@ def _export_scaling_plot(
 )
 @click.option("--skip-cuda", is_flag=True, help="Skip the CUDA sweep.")
 @click.option("--skip-cpu", is_flag=True, help="Skip the JAX CPU sweep.")
+@click.option("--skip-gpu2x", is_flag=True, help="Skip the 2-GPU sharded CUDA sweep.")
 @click.option("--skip-pyelastica", is_flag=True, help="Skip the PyElastica sweep.")
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
@@ -114,6 +117,8 @@ def main(
     cuda_max_exp: int,
     cpu_min_exp: int,
     cpu_max_exp: int,
+    gpu2x_min_exp: int,
+    gpu2x_max_exp: int,
     pyelastica_min_exp: int,
     pyelastica_max_exp: int,
     no_external_loads: bool,
@@ -121,11 +126,12 @@ def main(
     output: Path,
     skip_cuda: bool,
     skip_cpu: bool,
+    skip_gpu2x: bool,
     skip_pyelastica: bool,
     quiet: bool,
 ) -> None:
     assert steps > 0, "steps must be positive."
-    assert not (skip_cuda and skip_cpu and skip_pyelastica), (
+    assert not (skip_cuda and skip_cpu and skip_gpu2x and skip_pyelastica), (
         "At least one backend sweep is required."
     )
 
@@ -150,6 +156,13 @@ def main(
             "cpu",
             cpu_min_exp,
             cpu_max_exp,
+            **sweep_kwargs,
+        )
+    if not skip_gpu2x:
+        series["gpu2x"] = _sweep_backend(
+            "gpu2x",
+            gpu2x_min_exp,
+            gpu2x_max_exp,
             **sweep_kwargs,
         )
     if not skip_pyelastica:
