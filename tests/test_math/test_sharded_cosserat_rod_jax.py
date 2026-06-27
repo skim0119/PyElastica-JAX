@@ -69,6 +69,35 @@ def test_sharded_block_splits_across_devices_when_mesh_has_two_shards() -> None:
     )
 
 
+def test_sharded_position_collection_device_lives_on_primary_shard() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
+    block = _make_two_rod_block(mesh)
+    positions = block.position_collection_device
+    assert positions.shape == block.position_collection.shape
+    assert positions.device == devices[0]
+    assert np.allclose(
+        np.asarray(positions),
+        block.position_collection,
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_sharded_merge_shard_states_concatenates_on_primary_device() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
+    block = _make_two_rod_block(mesh)
+    state = block.jax_get_state()
+    merged = block.merge_shard_states(state)
+    assert merged["position_collection"].device == devices[0]
+    assert merged["position_collection"].shape == block.position_collection.shape
+
+
 def test_sharded_block_exposes_global_rest_lengths_view() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:

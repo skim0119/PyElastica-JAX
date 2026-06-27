@@ -204,6 +204,21 @@ class _ShardedCosseratRodBlock:
             f"Unsupported rank {chunks[0].ndim} for syncable attribute {attr!r}."
         )
 
+    def _primary_device(self) -> jax.Device:
+        return self.mesh.devices[0]
+
+    def _concatenate_device_arrays(
+        self,
+        arrays: list[jax.Array],
+        *,
+        axis: int,
+    ) -> jax.Array:
+        primary_device = self._primary_device()
+        transferred = [
+            jax.device_put(array, device=primary_device) for array in arrays
+        ]
+        return jnp.concatenate(transferred, axis=axis)
+
     def _concatenate_rod_index_array(self, attr: str) -> np.ndarray:
         chunks = []
         node_offset = 0
@@ -228,10 +243,7 @@ class _ShardedCosseratRodBlock:
         if not self.mesh.is_sharded:
             return self._primary_block.position_collection_device
         shards = [block.position_collection_device for block in self._shard_blocks]
-        return jax.device_put(
-            jnp.concatenate(shards, axis=1),
-            device=shards[0].device,
-        )
+        return self._concatenate_device_arrays(shards, axis=1)
 
     def _map_shard_states(
         self, state: dict[str, Any], method_name: str, *args: Any
@@ -308,7 +320,6 @@ class _ShardedCosseratRodBlock:
         assert is_sharded_block_state(
             state
         ), "merge_shard_states requires a sharded state."
-        primary_device = self.mesh.devices[0]
         merged: dict[str, Any] = {}
         for key in state["shards"][0]:
             chunks = []
@@ -325,17 +336,11 @@ class _ShardedCosseratRodBlock:
                         f"Unsupported rank {value.ndim} for state key {key!r}."
                     )
             if state["shards"][0][key].ndim == 1:
-                merged[key] = jax.device_put(
-                    jnp.concatenate(chunks, axis=0), device=primary_device
-                )
+                merged[key] = self._concatenate_device_arrays(chunks, axis=0)
             elif state["shards"][0][key].ndim == 2:
-                merged[key] = jax.device_put(
-                    jnp.concatenate(chunks, axis=1), device=primary_device
-                )
+                merged[key] = self._concatenate_device_arrays(chunks, axis=1)
             else:
-                merged[key] = jax.device_put(
-                    jnp.concatenate(chunks, axis=2), device=primary_device
-                )
+                merged[key] = self._concatenate_device_arrays(chunks, axis=2)
         return merged
 
     def scatter_merged_state(
