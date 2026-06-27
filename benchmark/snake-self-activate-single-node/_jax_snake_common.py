@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -14,6 +13,8 @@ if sys.path and Path(sys.path[0]).resolve() == SCRIPT_DIR:
     sys.path.pop(0)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
 
 import numpy as np
 
@@ -25,11 +26,13 @@ import jax.numpy as jnp
 
 from elastica_jax._linalg import _jax_batch_cross, _jax_batch_matvec
 
+type BenchmarkTiming = tuple[float, float]
 
 jax.config.update("jax_enable_x64", True)
 
 DEFAULT_PERIOD = 2.0
 DEFAULT_BASE_LENGTH = 0.35
+DEFAULT_BASE_RADIUS = DEFAULT_BASE_LENGTH * 0.011
 DEFAULT_DENSITY = 1000.0
 DEFAULT_YOUNGS_MODULUS = 1.0e6
 DEFAULT_POISSON_RATIO = 0.5
@@ -47,36 +50,24 @@ def default_b_coeff() -> np.ndarray:
     )
 
 
-def build_rod(
-    *,
-    n_elem: int,
-    base_length: float,
-    density: float,
-    youngs_modulus: float,
-    poisson_ratio: float,
-) -> ea.CosseratRod:
-    base_radius = base_length * 0.011
-    shear_modulus = youngs_modulus / (poisson_ratio + 1.0)
+def build_rod() -> ea.CosseratRod:
     return ea.CosseratRod.straight_rod(
-        n_elem,
+        DEFAULT_N_ELEM,
         np.zeros(3),
         np.array([0.0, 0.0, 1.0]),
         np.array([0.0, 1.0, 0.0]),
-        base_length,
-        base_radius,
-        density,
-        youngs_modulus=youngs_modulus,
-        shear_modulus=shear_modulus,
+        DEFAULT_BASE_LENGTH,
+        DEFAULT_BASE_RADIUS,
+        DEFAULT_DENSITY,
+        DEFAULT_YOUNGS_MODULUS,
     )
 
 
-class MultiSnakeReferenceSimulator(
-    ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Contact
-):
+class PyElasticaSimulator(ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Contact):
     pass
 
 
-class MultiSnakeJAXBlockSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 
@@ -180,346 +171,7 @@ def _find_slipping_elements_batch(
     return jnp.where(abs_velocity_slip > velocity_threshold, slip_values, slip_function)
 
 
-class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
-    def __init__(
-        self,
-        *,
-        b_coeff: np.ndarray,
-        period: float,
-        base_length: float,
-        _system,
-    ) -> None:
-        widths = _system.end_idx_in_rod_elems - _system.start_idx_in_rod_elems
-        assert np.all(widths == widths[0]), (
-            "SnakeMuscleTorquesBlockJax requires uniform element counts across rods."
-        )
-        template = ea.MuscleTorques(
-            base_length=base_length,
-            b_coeff=b_coeff[:-1],
-            period=period,
-            wave_number=2.0 * np.pi / float(b_coeff[-1]),
-            phase_shift=0.0,
-            direction=np.array([0.0, 1.0, 0.0]),
-            rest_lengths=np.asarray(
-                _system.rest_lengths[
-                    _system.start_idx_in_rod_elems[0] : _system.end_idx_in_rod_elems[0]
-                ]
-            ),
-            ramp_up_time=period,
-            with_spline=True,
-        )
-        self.elem_indices = jnp.asarray(
-            _uniform_index_matrix(
-                _system.start_idx_in_rod_elems,
-                _system.end_idx_in_rod_elems,
-            )
-        )
-        self.direction = jnp.asarray(np.array([0.0, 1.0, 0.0], dtype=np.float64))
-        self.s = jnp.asarray(np.asarray(template.s, dtype=np.float64))
-        self.spline = jnp.asarray(np.asarray(template.my_spline, dtype=np.float64))
-        self.angular_frequency = np.float64(2.0 * np.pi / period)
-        self.wave_number = np.float64(2.0 * np.pi / float(b_coeff[-1]))
-        self.phase_shift = np.float64(0.0)
-        self.ramp_up_time = np.float64(period)
-
-    def jax_block_operate_synchronize(
-        self,
-        state: dict[str, jax.Array],
-        time: np.float64,
-    ) -> dict[str, jax.Array]:
-        dtype = state["director_collection"].dtype
-        directors = _gather_tensor_batch(
-            state["director_collection"], self.elem_indices
-        )
-        factor = jnp.minimum(
-            jnp.asarray(1.0, dtype=dtype),
-            jnp.asarray(time, dtype=dtype)
-            / jnp.asarray(self.ramp_up_time, dtype=dtype),
-        )
-        torque_mag = (
-            factor
-            * jnp.asarray(self.spline, dtype=dtype)
-            * jnp.sin(
-                jnp.asarray(self.angular_frequency, dtype=dtype)
-                * jnp.asarray(time, dtype=dtype)
-                - jnp.asarray(self.wave_number, dtype=dtype)
-                * jnp.asarray(self.s, dtype=dtype)
-                + jnp.asarray(self.phase_shift, dtype=dtype)
-            )
-        )
-        torque_local = (
-            jnp.asarray(self.direction, dtype=dtype)[None, :, None]
-            * torque_mag[::-1][None, None, :]
-        )
-        torque_local = jnp.broadcast_to(
-            torque_local,
-            (directors.shape[0], torque_local.shape[1], torque_local.shape[2]),
-        )
-        torque_world = _batch_matvec_over_rods(directors, torque_local)
-        external_torques = state["external_torques"]
-        external_torques = external_torques.at[:, self.elem_indices[:, 1:]].add(
-            jnp.moveaxis(torque_world[:, :, 1:], 0, 1)
-        )
-        previous_directors = directors[:, :, :, :-1]
-        next_local = torque_local[:, :, 1:]
-        previous_world = _batch_matvec_over_rods(previous_directors, next_local)
-        external_torques = external_torques.at[:, self.elem_indices[:, :-1]].add(
-            -jnp.moveaxis(previous_world, 0, 1)
-        )
-        updated = dict(state)
-        updated["external_torques"] = external_torques
-        return updated
-
-
-class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
-    def __init__(
-        self,
-        *,
-        plane_origin: np.ndarray,
-        plane_normal: np.ndarray,
-        slip_velocity_tol: float,
-        k: float,
-        nu: float,
-        kinetic_mu_array: np.ndarray,
-        static_mu_array: np.ndarray,
-        gravitational_acc: float,
-        _system,
-    ) -> None:
-        del static_mu_array
-        self.node_indices = jnp.asarray(
-            _uniform_index_matrix(
-                _system.start_idx_in_rod_nodes,
-                _system.end_idx_in_rod_nodes,
-            )
-        )
-        self.elem_indices = jnp.asarray(
-            _uniform_index_matrix(
-                _system.start_idx_in_rod_elems,
-                _system.end_idx_in_rod_elems,
-            )
-        )
-        self.plane_origin = jnp.asarray(np.asarray(plane_origin, dtype=np.float64))
-        self.plane_normal = jnp.asarray(np.asarray(plane_normal, dtype=np.float64))
-        self.gravity = jnp.asarray(
-            np.array([0.0, gravitational_acc, 0.0], dtype=np.float64)
-        )
-        self.surface_tol = np.float64(1.0e-4)
-        self.slip_velocity_tol = np.float64(slip_velocity_tol)
-        self.k = np.float64(k)
-        self.nu = np.float64(nu)
-        self.kinetic_mu_forward = np.float64(kinetic_mu_array[0])
-        self.kinetic_mu_backward = np.float64(kinetic_mu_array[1])
-        self.kinetic_mu_sideways = np.float64(kinetic_mu_array[2])
-
-    def jax_block_operate_synchronize(
-        self,
-        state: dict[str, jax.Array],
-        time: np.float64,
-    ) -> dict[str, jax.Array]:
-        del time
-        dtype = state["position_collection"].dtype
-        position = _gather_vector_batch(state["position_collection"], self.node_indices)
-        velocity = _gather_vector_batch(state["velocity_collection"], self.node_indices)
-        mass = _gather_scalar_batch(state["mass"], self.node_indices)
-        radius = _gather_scalar_batch(state["radius"], self.elem_indices)
-        tangents = _gather_vector_batch(state["tangents"], self.elem_indices)
-        directors = _gather_tensor_batch(
-            state["director_collection"], self.elem_indices
-        )
-        omegas = _gather_vector_batch(state["omega_collection"], self.elem_indices)
-        internal_forces = _gather_vector_batch(
-            state["internal_forces"], self.node_indices
-        )
-        external_forces = _gather_vector_batch(
-            state["external_forces"], self.node_indices
-        )
-        external_torques = _gather_vector_batch(
-            state["external_torques"], self.elem_indices
-        )
-
-        external_forces = (
-            external_forces
-            + jnp.asarray(self.gravity, dtype=dtype)[None, :, None] * mass[:, None, :]
-        )
-
-        nodal_total_forces = internal_forces + external_forces
-        element_total_forces = _node_to_element_mass_or_force_batch(nodal_total_forces)
-        plane_normal = jnp.asarray(self.plane_normal, dtype=dtype)[None, :, None]
-        force_component_along_normal_direction = jnp.sum(
-            plane_normal * element_total_forces, axis=1
-        )
-        forces_along_normal_direction = (
-            plane_normal * force_component_along_normal_direction[:, None, :]
-        )
-        forces_along_normal_direction = jnp.where(
-            force_component_along_normal_direction[:, None, :] > 0.0,
-            0.0,
-            forces_along_normal_direction,
-        )
-        plane_response_force = -forces_along_normal_direction
-
-        element_position = _node_to_element_position_batch(position)
-        distance_from_plane = jnp.sum(
-            plane_normal
-            * (
-                element_position
-                - jnp.asarray(self.plane_origin, dtype=dtype)[None, :, None]
-            ),
-            axis=1,
-        )
-        plane_penetration = jnp.minimum(distance_from_plane - radius, 0.0)
-        elastic_force = (
-            -jnp.asarray(self.k, dtype=dtype)
-            * plane_normal
-            * plane_penetration[:, None, :]
-        )
-        element_velocity = _node_to_element_velocity_batch(mass, velocity)
-        normal_component_of_element_velocity = jnp.sum(
-            plane_normal * element_velocity, axis=1
-        )
-        damping_force = (
-            -jnp.asarray(self.nu, dtype=dtype)
-            * plane_normal
-            * normal_component_of_element_velocity[:, None, :]
-        )
-        plane_response_force_total = (
-            plane_response_force + elastic_force + damping_force
-        )
-        no_contact = (distance_from_plane - radius) > jnp.asarray(
-            self.surface_tol, dtype=dtype
-        )
-        plane_response_force = jnp.where(
-            no_contact[:, None, :], 0.0, plane_response_force
-        )
-        plane_response_force_total = jnp.where(
-            no_contact[:, None, :], 0.0, plane_response_force_total
-        )
-
-        plane_response_force_mag = jnp.linalg.norm(plane_response_force, axis=1)
-        tangent_along_normal_direction = jnp.sum(plane_normal * tangents, axis=1)
-        tangent_perpendicular_to_normal_direction = (
-            tangents - plane_normal * tangent_along_normal_direction[:, None, :]
-        )
-        tangent_perpendicular_mag = jnp.linalg.norm(
-            tangent_perpendicular_to_normal_direction, axis=1
-        )
-        axial_direction = tangent_perpendicular_to_normal_direction / (
-            tangent_perpendicular_mag[:, None, :] + jnp.asarray(1.0e-14, dtype=dtype)
-        )
-        element_velocity = _node_to_element_velocity_batch(mass, velocity)
-        velocity_mag_along_axial_direction = jnp.sum(
-            element_velocity * axial_direction, axis=1
-        )
-        velocity_along_axial_direction = (
-            axial_direction * velocity_mag_along_axial_direction[:, None, :]
-        )
-        velocity_sign_along_axial_direction = jnp.sign(
-            velocity_mag_along_axial_direction
-        )
-        kinetic_mu = 0.5 * (
-            jnp.asarray(self.kinetic_mu_forward, dtype=dtype)
-            * (1.0 + velocity_sign_along_axial_direction)
-            + jnp.asarray(self.kinetic_mu_backward, dtype=dtype)
-            * (1.0 - velocity_sign_along_axial_direction)
-        )
-        rolling_direction = _batch_cross_over_rods(
-            axial_direction,
-            jnp.broadcast_to(plane_normal, axial_direction.shape),
-        )
-        torque_arm = -plane_normal * radius[:, None, :]
-        velocity_mag_along_rolling_direction = jnp.sum(
-            element_velocity * rolling_direction, axis=1
-        )
-        directors_transpose = jnp.transpose(directors, (0, 2, 1, 3))
-        rotation_velocity = _batch_matvec_over_rods(
-            directors_transpose,
-            _batch_cross_over_rods(
-                omegas,
-                _batch_matvec_over_rods(directors, torque_arm),
-            ),
-        )
-        rotation_velocity_along_rolling_direction = jnp.sum(
-            rotation_velocity * rolling_direction, axis=1
-        )
-        slip_velocity_mag_along_rolling_direction = (
-            velocity_mag_along_rolling_direction
-            + rotation_velocity_along_rolling_direction
-        )
-        slip_velocity_along_rolling_direction = (
-            rolling_direction * slip_velocity_mag_along_rolling_direction[:, None, :]
-        )
-        slip_function_along_axial_direction = _find_slipping_elements_batch(
-            velocity_along_axial_direction,
-            jnp.asarray(self.slip_velocity_tol, dtype=dtype),
-        )
-        slip_function_along_rolling_direction = _find_slipping_elements_batch(
-            slip_velocity_along_rolling_direction,
-            jnp.asarray(self.slip_velocity_tol, dtype=dtype),
-        )
-        unitized_total_velocity = (
-            slip_velocity_along_rolling_direction + velocity_along_axial_direction
-        )
-        unitized_total_velocity = (
-            unitized_total_velocity
-            / (jnp.linalg.norm(unitized_total_velocity + 1.0e-14, axis=1)[:, None, :])
-        )
-        kinetic_friction_force_along_axial_direction = (
-            -(1.0 - slip_function_along_axial_direction)[:, None, :]
-            * kinetic_mu[:, None, :]
-            * plane_response_force_mag[:, None, :]
-            * jnp.sum(unitized_total_velocity * axial_direction, axis=1)[:, None, :]
-            * axial_direction
-        )
-        kinetic_friction_force_along_axial_direction = jnp.where(
-            no_contact[:, None, :],
-            0.0,
-            kinetic_friction_force_along_axial_direction,
-        )
-        kinetic_friction_force_along_rolling_direction = (
-            -(1.0 - slip_function_along_rolling_direction)[:, None, :]
-            * jnp.asarray(self.kinetic_mu_sideways, dtype=dtype)
-            * plane_response_force_mag[:, None, :]
-            * jnp.sum(unitized_total_velocity * rolling_direction, axis=1)[:, None, :]
-            * rolling_direction
-        )
-        kinetic_friction_force_along_rolling_direction = jnp.where(
-            no_contact[:, None, :],
-            0.0,
-            kinetic_friction_force_along_rolling_direction,
-        )
-        external_forces = external_forces + _elements_to_nodes_batch(
-            plane_response_force_total
-        )
-        external_forces = external_forces + _elements_to_nodes_batch(
-            kinetic_friction_force_along_axial_direction
-        )
-        external_forces = external_forces + _elements_to_nodes_batch(
-            kinetic_friction_force_along_rolling_direction
-        )
-        external_torques = external_torques + _batch_matvec_over_rods(
-            directors,
-            _batch_cross_over_rods(
-                torque_arm,
-                kinetic_friction_force_along_rolling_direction,
-            ),
-        )
-
-        updated = dict(state)
-        updated["external_forces"] = _scatter_set_vector_batch(
-            state["external_forces"],
-            self.node_indices,
-            external_forces,
-        )
-        updated["external_torques"] = _scatter_set_vector_batch(
-            state["external_torques"],
-            self.elem_indices,
-            external_torques,
-        )
-        return updated
-
-
-def snake_start(index: int, spacing: float) -> np.ndarray:
-    return np.array([index * spacing, 0.0, 0.0], dtype=np.float64)
+from snake_operation import GravityPlaneContactBlockJax, SnakeMuscleTorquesBlockJax
 
 
 def two_gpu_half_split_mesh(n_snakes: int) -> eaj.ExecutionMesh:
@@ -556,68 +208,55 @@ def build_cpu_sim(
     density: float = DEFAULT_DENSITY,
     youngs_modulus: float = DEFAULT_YOUNGS_MODULUS,
     poisson_ratio: float = DEFAULT_POISSON_RATIO,
-    gravitational_acc: float = DEFAULT_GRAVITY,
     time_step: float = DEFAULT_DT,
-    include_external_loads: bool = True,
-) -> tuple[MultiSnakeReferenceSimulator, list[ea.CosseratRod]]:
+) -> tuple[PyElasticaSimulator, list[ea.CosseratRod]]:
     b_coeff = default_b_coeff()
     normal = np.array([0.0, 1.0, 0.0], dtype=np.float64)
     wave_length = float(b_coeff[-1])
-    mu = base_length / (period * period * np.abs(gravitational_acc) * DEFAULT_FROUDE)
+    mu = base_length / (period * period * np.abs(DEFAULT_GRAVITY) * DEFAULT_FROUDE)
     kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
     static_mu_array = np.zeros(kinetic_mu_array.shape, dtype=np.float64)
-    spacing = 1.5 * base_length
 
-    sim = MultiSnakeReferenceSimulator()
+    sim = PyElasticaSimulator()
     rods: list[ea.CosseratRod] = []
-    if include_external_loads:
-        ground_plane = ea.Plane(
-            plane_origin=np.array([0.0, -base_length * 0.011, 0.0], dtype=np.float64),
-            plane_normal=normal,
-        )
-        sim.append(ground_plane)
+    ground_plane = ea.Plane(
+        plane_origin=np.array([0.0, -base_length * 0.011, 0.0], dtype=np.float64),
+        plane_normal=normal,
+    )
+    sim.append(ground_plane)
 
     for idx in range(n_snakes):
-        rod = build_rod(
-            n_elem=n_elem,
-            base_length=base_length,
-            density=density,
-            youngs_modulus=youngs_modulus,
-            poisson_ratio=poisson_ratio,
-        )
-        start = snake_start(idx, spacing)
-        rod.position_collection[...] = rod.position_collection + start[:, None]
+        rod = build_rod()
         sim.append(rod)
-        if include_external_loads:
-            sim.add_forcing_to(rod).using(
-                ea.GravityForces,
-                acc_gravity=np.array([0.0, gravitational_acc, 0.0], dtype=np.float64),
-            )
-            sim.add_forcing_to(rod).using(
-                ea.MuscleTorques,
-                base_length=base_length,
-                b_coeff=b_coeff[:-1],
-                period=period,
-                wave_number=2.0 * np.pi / wave_length,
-                phase_shift=0.0,
-                rest_lengths=rod.rest_lengths,
-                ramp_up_time=period,
-                direction=normal,
-                with_spline=True,
-            )
-            sim.detect_contact_between(rod, ground_plane).using(
-                ea.RodPlaneContactWithAnisotropicFriction,
-                k=1.0,
-                nu=1.0e-6,
-                slip_velocity_tol=1.0e-8,
-                static_mu_array=static_mu_array,
-                kinetic_mu_array=kinetic_mu_array,
-            )
-            sim.dampen(rod).using(
-                ea.AnalyticalLinearDamper,
-                damping_constant=DEFAULT_DAMPING,
-                time_step=time_step,
-            )
+        sim.add_forcing_to(rod).using(
+            ea.GravityForces,
+            acc_gravity=np.array([0.0, DEFAULT_GRAVITY, 0.0], dtype=np.float64),
+        )
+        sim.add_forcing_to(rod).using(
+            ea.MuscleTorques,
+            base_length=base_length,
+            b_coeff=b_coeff[:-1],
+            period=period,
+            wave_number=2.0 * np.pi / wave_length,
+            phase_shift=0.0,
+            rest_lengths=rod.rest_lengths,
+            ramp_up_time=period,
+            direction=normal,
+            with_spline=True,
+        )
+        sim.detect_contact_between(rod, ground_plane).using(
+            ea.RodPlaneContactWithAnisotropicFriction,
+            k=1.0,
+            nu=1.0e-6,
+            slip_velocity_tol=1.0e-8,
+            static_mu_array=static_mu_array,
+            kinetic_mu_array=kinetic_mu_array,
+        )
+        sim.dampen(rod).using(
+            ea.AnalyticalLinearDamper,
+            damping_constant=DEFAULT_DAMPING,
+            time_step=time_step,
+        )
         rods.append(rod)
 
     sim.finalize()
@@ -626,137 +265,61 @@ def build_cpu_sim(
 
 def build_jax_sim(
     *,
-    device: jax.Device,
+    device: jax.Device | eaj.ExecutionMesh,
     device_dtype: np.dtype,
     n_snakes: int,
-    n_elem: int = DEFAULT_N_ELEM,
-    period: float = DEFAULT_PERIOD,
-    base_length: float = DEFAULT_BASE_LENGTH,
-    density: float = DEFAULT_DENSITY,
-    youngs_modulus: float = DEFAULT_YOUNGS_MODULUS,
-    poisson_ratio: float = DEFAULT_POISSON_RATIO,
-    gravitational_acc: float = DEFAULT_GRAVITY,
-    time_step: float = DEFAULT_DT,
-    include_external_loads: bool = True,
-    snake_index_offset: int = 0,
-) -> tuple[MultiSnakeJAXBlockSimulator, eaj._CosseratRodMemoryBlock]:
-    rod_block = eaj.configure_rod_block(
-        device=device,
-        device_dtype=np.dtype(device_dtype),
-    )
-    return _build_multi_snake_jax_block_sim(
-        rod_block,
-        n_snakes=n_snakes,
-        n_elem=n_elem,
-        period=period,
-        base_length=base_length,
-        density=density,
-        youngs_modulus=youngs_modulus,
-        poisson_ratio=poisson_ratio,
-        gravitational_acc=gravitational_acc,
-        time_step=time_step,
-        include_external_loads=include_external_loads,
-        snake_index_offset=snake_index_offset,
-    )
+    sharded: bool = False,
+) -> tuple[JAXSimulator, eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock]:
+    if sharded:
+        rod_block = eaj.configure_rod_block_sharded(
+            mesh=device,
+            device_dtype=np.dtype(device_dtype),
+        )
+    else:
+        rod_block = eaj.configure_rod_block(
+            device=device,
+            device_dtype=np.dtype(device_dtype),
+        )
 
-
-def build_jax_sharded_sim(
-    *,
-    mesh: eaj.ExecutionMesh,
-    device_dtype: np.dtype,
-    n_snakes: int,
-    n_elem: int = DEFAULT_N_ELEM,
-    period: float = DEFAULT_PERIOD,
-    base_length: float = DEFAULT_BASE_LENGTH,
-    density: float = DEFAULT_DENSITY,
-    youngs_modulus: float = DEFAULT_YOUNGS_MODULUS,
-    poisson_ratio: float = DEFAULT_POISSON_RATIO,
-    gravitational_acc: float = DEFAULT_GRAVITY,
-    time_step: float = DEFAULT_DT,
-    include_external_loads: bool = True,
-) -> tuple[MultiSnakeJAXBlockSimulator, eaj._ShardedCosseratRodBlock]:
-    rod_block = eaj.configure_rod_block_sharded(
-        mesh=mesh,
-        device_dtype=np.dtype(device_dtype),
-    )
-    return _build_multi_snake_jax_block_sim(
-        rod_block,
-        n_snakes=n_snakes,
-        n_elem=n_elem,
-        period=period,
-        base_length=base_length,
-        density=density,
-        youngs_modulus=youngs_modulus,
-        poisson_ratio=poisson_ratio,
-        gravitational_acc=gravitational_acc,
-        time_step=time_step,
-        include_external_loads=include_external_loads,
-    )
-
-
-def _build_multi_snake_jax_block_sim(
-    rod_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
-    *,
-    n_snakes: int,
-    n_elem: int,
-    period: float,
-    base_length: float,
-    density: float,
-    youngs_modulus: float,
-    poisson_ratio: float,
-    gravitational_acc: float,
-    time_step: float,
-    include_external_loads: bool,
-    snake_index_offset: int = 0,
-) -> tuple[
-    MultiSnakeJAXBlockSimulator,
-    eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
-]:
     b_coeff = default_b_coeff()
-    mu = base_length / (period * period * np.abs(gravitational_acc) * DEFAULT_FROUDE)
+    period = DEFAULT_PERIOD
+    mu = DEFAULT_BASE_LENGTH / (
+        period * period * np.abs(DEFAULT_GRAVITY) * DEFAULT_FROUDE
+    )
     kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
     static_mu_array = np.zeros(kinetic_mu_array.shape, dtype=np.float64)
-    spacing = 1.5 * base_length
 
-    sim = MultiSnakeJAXBlockSimulator()
+    sim = JAXSimulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
     for idx in range(n_snakes):
-        rod = build_rod(
-            n_elem=n_elem,
-            base_length=base_length,
-            density=density,
-            youngs_modulus=youngs_modulus,
-            poisson_ratio=poisson_ratio,
-        )
-        start = snake_start(snake_index_offset + idx, spacing)
-        rod.position_collection[...] = rod.position_collection + start[:, None]
+        rod = build_rod()
         sim.append(rod)
 
-    if include_external_loads:
-        sim.operate_block(ea.CosseratRod).using(
-            SnakeMuscleTorquesBlockJax,
-            b_coeff=b_coeff,
-            period=period,
-            base_length=base_length,
-        )
-        sim.operate_block(ea.CosseratRod).using(
-            GravityPlaneContactBlockJax,
-            plane_origin=np.array([0.0, -base_length * 0.011, 0.0], dtype=np.float64),
-            plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
-            slip_velocity_tol=1.0e-8,
-            k=1.0,
-            nu=1.0e-6,
-            static_mu_array=static_mu_array,
-            kinetic_mu_array=kinetic_mu_array,
-            gravitational_acc=gravitational_acc,
-        )
-        sim.operate_block(ea.CosseratRod).using(
-            eaj.AnalyticalLinearDamperJax,
-            time_step=np.float64(time_step),
-            damping_constant=DEFAULT_DAMPING,
-        )
-
+    sim.operate_block(ea.CosseratRod).using(
+        SnakeMuscleTorquesBlockJax,
+        b_coeff=b_coeff,
+        period=period,
+        base_length=DEFAULT_BASE_LENGTH,
+    )
+    sim.operate_block(ea.CosseratRod).using(
+        GravityPlaneContactBlockJax,
+        plane_origin=np.array(
+            [0.0, -DEFAULT_BASE_LENGTH * 0.011, 0.0], dtype=np.float64
+        ),
+        plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
+        slip_velocity_tol=1.0e-8,
+        k=1.0,
+        nu=1.0e-6,
+        static_mu_array=static_mu_array,
+        kinetic_mu_array=kinetic_mu_array,
+    )
+    sim.operate_block(ea.CosseratRod).using(
+        eaj.AnalyticalLinearDamperJax,
+        time_step=np.float64(DEFAULT_DT),
+        damping_constant=DEFAULT_DAMPING,
+    )
     sim.finalize()
+
     return sim, rod_block
 
 
@@ -802,9 +365,6 @@ def emit_report(lines: list[str], log_path: Path | None) -> None:
         log_path.write_text(report + "\n", encoding="utf-8")
 
 
-type BenchmarkTiming = tuple[float, float]
-
-
 def run_pyelastica_rollout(
     *,
     n_snakes: int,
@@ -812,84 +372,56 @@ def run_pyelastica_rollout(
     warmup_runs: int,
     n_elem: int = DEFAULT_N_ELEM,
     dt: float = DEFAULT_DT,
-    include_external_loads: bool = True,
 ) -> BenchmarkTiming:
     """Build a PyElastica simulator and time a fixed-length Position Verlet rollout."""
     dt_value = np.float64(dt)
-    final_time = np.float64(steps * dt)
 
     instantiate_start = time.perf_counter()
     cpu_sim, _cpu_rods = build_cpu_sim(
         n_snakes=n_snakes,
         n_elem=n_elem,
         time_step=dt,
-        include_external_loads=include_external_loads,
     )
     instantiate_seconds = time.perf_counter() - instantiate_start
 
-    stepper = ea.PositionVerlet()
-    if warmup_runs > 0:
-        warmup_sim, _ = build_cpu_sim(
-            n_snakes=n_snakes,
-            n_elem=n_elem,
-            time_step=dt,
-            include_external_loads=include_external_loads,
-        )
-        warmup_stepper = ea.PositionVerlet()
-        for _ in range(warmup_runs):
-            warmup_time = np.float64(0.0)
-            for _ in range(steps):
-                warmup_time = warmup_stepper.step(warmup_sim, warmup_time, dt_value)
-
     time_value = np.float64(0.0)
+    stepper = ea.PositionVerlet()
+    for _ in range(warmup_runs):
+        time_value = stepper.step(cpu_sim, time_value, dt_value)
+
     rollout_start = time.perf_counter()
     for _ in range(steps):
         time_value = stepper.step(cpu_sim, time_value, dt_value)
     rollout_seconds = time.perf_counter() - rollout_start
-    assert np.isclose(time_value, final_time), (
-        "PyElastica rollout did not end at final_time."
-    )
     return instantiate_seconds, rollout_seconds
 
 
-def _integrate_jax_block_rollout(
-    jax_sim: MultiSnakeJAXBlockSimulator,
+def integrate_jax_block_rollout(
+    jax_sim: JAXSimulator,
     jax_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
     *,
     steps: int,
-    dt: float,
     warmup_runs: int,
-    transfer_guard: str,
 ) -> float:
-    dt_value = np.float64(dt)
-    final_time = np.float64(steps * dt)
+    dt_value = DEFAULT_DT
     stepper = eaj.PositionVerletJAX()
-    guard_context = (
-        jax.transfer_guard(transfer_guard)
-        if transfer_guard != "allow"
-        else nullcontext()
+    time_value = np.float64(0.0)
+    time_value = stepper.integrate(
+        jax_sim,
+        time=time_value,
+        final_time=time_value + warmup_runs * dt_value,
+        dt=dt_value,
     )
-    with guard_context:
-        for _ in range(warmup_runs):
-            initial_state = dict(jax_block.jax_get_state())
-            stepper.integrate(
-                jax_sim,
-                time=np.float64(0.0),
-                final_time=final_time,
-                dt=dt_value,
-            )
-            _block_until_ready_rod_block(jax_block)
-            jax_block.jax_set_state(initial_state)
-
-        rollout_start = time.perf_counter()
-        stepper.integrate(
-            jax_sim,
-            time=np.float64(0.0),
-            final_time=final_time,
-            dt=dt_value,
-        )
-        _block_until_ready_rod_block(jax_block)
-        return time.perf_counter() - rollout_start
+    _block_until_ready_rod_block(jax_block)
+    rollout_start = time.perf_counter()
+    stepper.integrate(
+        jax_sim,
+        time=time_value,
+        final_time=time_value + steps * dt_value,
+        dt=dt_value,
+    )
+    _block_until_ready_rod_block(jax_block)
+    return time.perf_counter() - rollout_start
 
 
 def run_jax_rollout(
@@ -898,13 +430,8 @@ def run_jax_rollout(
     n_snakes: int,
     steps: int,
     warmup_runs: int,
-    transfer_guard: str,
-    n_elem: int = DEFAULT_N_ELEM,
-    dt: float = DEFAULT_DT,
-    include_external_loads: bool = True,
 ) -> BenchmarkTiming:
     """Build a single-device JAX block simulator and time a Position Verlet rollout."""
-    dt_value = np.float64(dt)
     dtype = np.dtype(np.float64)
     device = eaj.resolve_backend_devices(backend)[0]
 
@@ -914,19 +441,14 @@ def run_jax_rollout(
             device=device,
             device_dtype=dtype,
             n_snakes=n_snakes,
-            n_elem=n_elem,
-            time_step=dt,
-            include_external_loads=include_external_loads,
         )
         _block_until_ready_rod_block(jax_block)
         instantiate_seconds = time.perf_counter() - instantiate_start
-        rollout_seconds = _integrate_jax_block_rollout(
+        rollout_seconds = integrate_jax_block_rollout(
             jax_sim,
             jax_block,
             steps=steps,
-            dt=dt_value,
             warmup_runs=warmup_runs,
-            transfer_guard=transfer_guard,
         )
 
     return instantiate_seconds, rollout_seconds
@@ -937,75 +459,26 @@ def run_jax_rollout_gpu2x_sharded(
     n_snakes: int,
     steps: int,
     warmup_runs: int,
-    transfer_guard: str,
-    n_elem: int = DEFAULT_N_ELEM,
-    dt: float = DEFAULT_DT,
-    include_external_loads: bool = True,
 ) -> BenchmarkTiming:
     """Build a 2-GPU sharded JAX block simulator and time a Position Verlet rollout."""
-    dt_value = np.float64(dt)
     dtype = np.dtype(np.float64)
     mesh = two_gpu_half_split_mesh(n_snakes)
 
     instantiate_start = time.perf_counter()
-    jax_sim, jax_block = build_jax_sharded_sim(
-        mesh=mesh,
+    jax_sim, jax_block = build_jax_sim(
+        device=mesh,
         device_dtype=dtype,
         n_snakes=n_snakes,
-        n_elem=n_elem,
-        time_step=dt,
-        include_external_loads=include_external_loads,
+        sharded=True,
     )
     _block_until_ready_rod_block(jax_block)
     instantiate_seconds = time.perf_counter() - instantiate_start
-    rollout_seconds = _integrate_jax_block_rollout(
+    rollout_seconds = integrate_jax_block_rollout(
         jax_sim,
         jax_block,
         steps=steps,
-        dt=dt_value,
         warmup_runs=warmup_runs,
-        transfer_guard=transfer_guard,
     )
-
-    return instantiate_seconds, rollout_seconds
-
-
-def _run_jax_rollout_on_device(
-    *,
-    device: jax.Device,
-    n_snakes: int,
-    snake_index_offset: int,
-    steps: int,
-    warmup_runs: int,
-    transfer_guard: str,
-    n_elem: int,
-    dt: float,
-    include_external_loads: bool,
-) -> BenchmarkTiming:
-    dt_value = np.float64(dt)
-    dtype = np.dtype(np.float64)
-
-    with jax.default_device(device):
-        instantiate_start = time.perf_counter()
-        jax_sim, jax_block = build_jax_sim(
-            device=device,
-            device_dtype=dtype,
-            n_snakes=n_snakes,
-            n_elem=n_elem,
-            time_step=dt,
-            include_external_loads=include_external_loads,
-            snake_index_offset=snake_index_offset,
-        )
-        _block_until_ready_rod_block(jax_block)
-        instantiate_seconds = time.perf_counter() - instantiate_start
-        rollout_seconds = _integrate_jax_block_rollout(
-            jax_sim,
-            jax_block,
-            steps=steps,
-            dt=dt_value,
-            warmup_runs=warmup_runs,
-            transfer_guard=transfer_guard,
-        )
 
     return instantiate_seconds, rollout_seconds
 
@@ -1015,39 +488,26 @@ def run_jax_rollout_gpu2x(
     n_snakes: int,
     steps: int,
     warmup_runs: int,
-    transfer_guard: str,
-    n_elem: int = DEFAULT_N_ELEM,
-    dt: float = DEFAULT_DT,
-    include_external_loads: bool = True,
 ) -> BenchmarkTiming:
     """Run two single-GPU block rollouts in parallel, one per CUDA device."""
     devices = eaj.resolve_backend_devices("cuda")
-    assert len(devices) >= 2, "gpu2x requires at least two CUDA devices."
     split = n_snakes // 2
     remainder = n_snakes - split
-    worker_kwargs = {
-        "steps": steps,
-        "warmup_runs": warmup_runs,
-        "transfer_guard": transfer_guard,
-        "n_elem": n_elem,
-        "dt": dt,
-        "include_external_loads": include_external_loads,
-    }
     jobs = (
-        (devices[0], split, 0),
-        (devices[1], remainder, split),
+        (devices[0], split),
+        (devices[1], remainder),
     )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [
             executor.submit(
-                _run_jax_rollout_on_device,
+                run_jax_rollout,
                 device=device,
                 n_snakes=count,
-                snake_index_offset=offset,
-                **worker_kwargs,
+                steps=steps,
+                warmup_runs=warmup_runs,
             )
-            for device, count, offset in jobs
+            for device, count in jobs
         ]
         timings = [future.result() for future in futures]
 
