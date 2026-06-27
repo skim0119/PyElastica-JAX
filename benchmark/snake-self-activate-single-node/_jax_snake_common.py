@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -637,6 +638,7 @@ def build_jax_sim(
     gravitational_acc: float = DEFAULT_GRAVITY,
     time_step: float = DEFAULT_DT,
     include_external_loads: bool = True,
+    snake_index_offset: int = 0,
 ) -> tuple[MultiSnakeJAXBlockSimulator, eaj._CosseratRodMemoryBlock]:
     rod_block = eaj.configure_rod_block(
         device=device,
@@ -654,6 +656,7 @@ def build_jax_sim(
         gravitational_acc=gravitational_acc,
         time_step=time_step,
         include_external_loads=include_external_loads,
+        snake_index_offset=snake_index_offset,
     )
 
 
@@ -704,6 +707,7 @@ def _build_multi_snake_jax_block_sim(
     gravitational_acc: float,
     time_step: float,
     include_external_loads: bool,
+    snake_index_offset: int = 0,
 ) -> tuple[
     MultiSnakeJAXBlockSimulator,
     eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
@@ -724,7 +728,7 @@ def _build_multi_snake_jax_block_sim(
             youngs_modulus=youngs_modulus,
             poisson_ratio=poisson_ratio,
         )
-        start = snake_start(idx, spacing)
+        start = snake_start(snake_index_offset + idx, spacing)
         rod.position_collection[...] = rod.position_collection + start[:, None]
         sim.append(rod)
 
@@ -928,7 +932,7 @@ def run_jax_rollout(
     return instantiate_seconds, rollout_seconds
 
 
-def run_jax_rollout_gpu2x(
+def run_jax_rollout_gpu2x_sharded(
     *,
     n_snakes: int,
     steps: int,
@@ -963,4 +967,90 @@ def run_jax_rollout_gpu2x(
         transfer_guard=transfer_guard,
     )
 
+    return instantiate_seconds, rollout_seconds
+
+
+def _run_jax_rollout_on_device(
+    *,
+    device: jax.Device,
+    n_snakes: int,
+    snake_index_offset: int,
+    steps: int,
+    warmup_runs: int,
+    transfer_guard: str,
+    n_elem: int,
+    dt: float,
+    include_external_loads: bool,
+) -> BenchmarkTiming:
+    dt_value = np.float64(dt)
+    dtype = np.dtype(np.float64)
+
+    with jax.default_device(device):
+        instantiate_start = time.perf_counter()
+        jax_sim, jax_block = build_jax_sim(
+            device=device,
+            device_dtype=dtype,
+            n_snakes=n_snakes,
+            n_elem=n_elem,
+            time_step=dt,
+            include_external_loads=include_external_loads,
+            snake_index_offset=snake_index_offset,
+        )
+        _block_until_ready_rod_block(jax_block)
+        instantiate_seconds = time.perf_counter() - instantiate_start
+        rollout_seconds = _integrate_jax_block_rollout(
+            jax_sim,
+            jax_block,
+            steps=steps,
+            dt=dt_value,
+            warmup_runs=warmup_runs,
+            transfer_guard=transfer_guard,
+        )
+
+    return instantiate_seconds, rollout_seconds
+
+
+def run_jax_rollout_gpu2x(
+    *,
+    n_snakes: int,
+    steps: int,
+    warmup_runs: int,
+    transfer_guard: str,
+    n_elem: int = DEFAULT_N_ELEM,
+    dt: float = DEFAULT_DT,
+    include_external_loads: bool = True,
+) -> BenchmarkTiming:
+    """Run two single-GPU block rollouts in parallel, one per CUDA device."""
+    devices = eaj.resolve_backend_devices("cuda")
+    assert len(devices) >= 2, "gpu2x requires at least two CUDA devices."
+    split = n_snakes // 2
+    remainder = n_snakes - split
+    worker_kwargs = {
+        "steps": steps,
+        "warmup_runs": warmup_runs,
+        "transfer_guard": transfer_guard,
+        "n_elem": n_elem,
+        "dt": dt,
+        "include_external_loads": include_external_loads,
+    }
+    jobs = (
+        (devices[0], split, 0),
+        (devices[1], remainder, split),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                _run_jax_rollout_on_device,
+                device=device,
+                n_snakes=count,
+                snake_index_offset=offset,
+                **worker_kwargs,
+            )
+            for device, count, offset in jobs
+        ]
+        timings = [future.result() for future in futures]
+
+    instantiate_seconds = max(timing[0] for timing in timings)
+    rollout_seconds = max(timing[1] for timing in timings)
     return instantiate_seconds, rollout_seconds
