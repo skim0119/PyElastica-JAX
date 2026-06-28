@@ -9,7 +9,7 @@ jax.config.update("jax_enable_x64", True)
 
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica._jax_rotations import _jax_get_rotation_matrix, _jax_inv_rotate
+from elastica_jax._rotations import _jax_get_rotation_matrix, _jax_inv_rotate
 from elastica._rotations import _get_rotation_matrix, _inv_rotate
 from elastica.utils import Tolerance
 

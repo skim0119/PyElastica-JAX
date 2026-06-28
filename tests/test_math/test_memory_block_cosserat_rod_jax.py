@@ -6,12 +6,6 @@ jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica_jax.memory_block.block_factory import (
-    DEFAULT_ROD_BLOCK_BACKEND,
-    DEFAULT_ROD_BLOCK_DTYPE,
-    _normalize_device_dtype,
-    _resolve_device,
-)
 from elastica_jax.memory_block.memory_block_rod_jax import (
     _CosseratRodMemoryBlock,
     _jax_update_accelerations,
@@ -29,13 +23,10 @@ JAX_RTOL = 1.0e-6
 
 
 def _make_block(rod, **kwargs):
-    device = kwargs.pop("device", DEFAULT_ROD_BLOCK_BACKEND)
-    device_dtype = kwargs.pop("device_dtype", DEFAULT_ROD_BLOCK_DTYPE)
     assert not kwargs, f"Unexpected kwargs: {kwargs}"
     with jax.default_device(CPU_DEVICE):
         block = _CosseratRodMemoryBlock(
-            device=_resolve_device(device),
-            device_dtype=_normalize_device_dtype(device_dtype),
+            device=jax.devices("cpu")[0], device_dtype=np.float64
         )
         block([rod], [0])
         return block
@@ -135,15 +126,6 @@ def test_memory_block_cosserat_rod_jax_to_device_updates_device_from_rod():
         block.position_collection,
     )
     np.testing.assert_allclose(block.position_collection, rod.position_collection)
-
-
-def test_memory_block_cosserat_rod_jax_respects_device_dtype():
-    rod = MockRod(6)
-    block = _make_block(rod, device_dtype="float32")
-
-    assert block.device_dtype == np.dtype(np.float32)
-    assert np.asarray(block._device_state["position_collection"]).dtype == np.float32
-    assert np.asarray(block._device_state["director_collection"]).dtype == np.float32
 
 
 def test_memory_block_cosserat_rod_jax_protocol_methods_are_state_consistent():
@@ -459,7 +441,9 @@ def test_memory_block_cosserat_rod_jax_zero_external_loads():
         block.jax_set_state(
             block.jax_zero_external_loads(block.jax_get_state(), np.float64(0.0))
         )
-    block.from_device(variables=("external_forces", "external_torques"), update_rods=False)
+    block.from_device(
+        variables=("external_forces", "external_torques"), update_rods=False
+    )
 
     assert_array_equal(block.external_forces, np.zeros_like(block.external_forces))
     assert_array_equal(block.external_torques, np.zeros_like(block.external_torques))

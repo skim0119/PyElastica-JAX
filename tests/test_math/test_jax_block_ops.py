@@ -1,24 +1,41 @@
 from __future__ import annotations
 
-import numpy as np
+import sys
+from pathlib import Path
 
-import elastica as ea
-from benchmark._jax_snake_common import (
-    AnalyticalLinearDamperBlockJax,
-    ConfiguredSnakeMemoryBlock,
+import numpy as np
+import pytest
+
+jax = pytest.importorskip("jax")
+jax.config.update("jax_enable_x64", True)
+
+import elastica_jax as eaj
+
+BENCHMARK_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "benchmark"
+    / "snake-self-activate-single-node"
+)
+sys.path.insert(0, str(BENCHMARK_DIR))
+
+from snake_operation import (  # noqa: E402
     GravityPlaneContactBlockJax,
     SnakeMuscleTorquesBlockJax,
 )
-from elastica.memory_block.memory_block_rod_jax import JAXRodView, JAXRodViewMetadata
 from examples.ContinuumSnakeGPUCase.run_continuum_snake_gpu import (
     SnakeMuscleTorquesJax,
     SnakePlaneContactJax,
     build_rod,
     default_b_coeff,
 )
+from elastica_jax.memory_block.memory_block_rod_jax import (  # noqa: E402
+    _CosseratRodMemoryBlock,
+    JAXRodView,
+    JAXRodViewMetadata,
+)
 
 
-def _single_rod_metadata(block: ConfiguredSnakeMemoryBlock) -> JAXRodViewMetadata:
+def _single_rod_metadata(block: _CosseratRodMemoryBlock) -> JAXRodViewMetadata:
     return JAXRodViewMetadata(
         0,
         slice(
@@ -38,9 +55,8 @@ def _single_rod_metadata(block: ConfiguredSnakeMemoryBlock) -> JAXRodViewMetadat
 
 def test_block_snake_ops_match_single_rod_sequence() -> None:
     rod = build_rod(n_elem=10)
-    ConfiguredSnakeMemoryBlock.device = None
-    ConfiguredSnakeMemoryBlock.device_dtype = np.dtype(np.float64)
-    block = ConfiguredSnakeMemoryBlock([rod], [0])
+    with jax.default_device(jax.devices("cpu")[0]):
+        block = eaj.configure_rod_block(device_dtype=np.float64)([rod], [0])
     base_state = block.jax_compute_internal_forces_and_torques(
         block.jax_get_state(),
         np.float64(0.0),
@@ -78,7 +94,7 @@ def test_block_snake_ops_match_single_rod_sequence() -> None:
         .commit()
     )
     rod_state = (
-        ea.AnalyticalLinearDamperJax(
+        eaj.AnalyticalLinearDamperJax(
             time_step=np.float64(1.0e-4),
             damping_constant=2.0e-3,
             _system=rod,
@@ -101,14 +117,17 @@ def test_block_snake_ops_match_single_rod_sequence() -> None:
         nu=1.0e-6,
         kinetic_mu_array=kinetic_mu,
         static_mu_array=static_mu,
-        gravitational_acc=-9.80665,
         _system=block,
     ).jax_block_operate_synchronize(block_state, time)
-    block_state = AnalyticalLinearDamperBlockJax(
-        time_step=np.float64(1.0e-4),
-        damping_constant=2.0e-3,
-        _system=block,
-    ).jax_block_operate_constrain_rates(block_state, time)
+    block_state = (
+        eaj.AnalyticalLinearDamperJax(
+            time_step=np.float64(1.0e-4),
+            damping_constant=2.0e-3,
+            _system=rod,
+        )
+        .jax_operate_constrain_rates(JAXRodView(block_state, metadata), time)
+        .commit()
+    )
 
     node_slice = metadata.node_slice
     elem_slice = metadata.element_slice

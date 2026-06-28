@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from elastica.timestepper.jax_steppers import PositionVerletJAX
+from elastica_jax import PositionVerletJAX
 
 
 class FakeJAXBlock:

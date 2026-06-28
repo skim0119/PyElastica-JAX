@@ -10,7 +10,7 @@ jax.config.update("jax_enable_x64", True)
 
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica._jax_linalg import (
+from elastica_jax._linalg import (
     _jax_batch_cross,
     _jax_batch_dot,
     _jax_batch_matmul,

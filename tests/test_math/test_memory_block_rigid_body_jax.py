@@ -6,7 +6,7 @@ jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica.memory_block.memory_block_rigid_body_jax import (
+from elastica_jax.memory_block.memory_block_rigid_body_jax import (
     MemoryBlockRigidBodyJax,
     _jax_update_accelerations,
 )

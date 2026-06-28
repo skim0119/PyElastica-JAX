@@ -4,9 +4,9 @@ import pytest
 jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
-from elastica.jax_operation import NoOpsJax
+from elastica.modules import BaseSystemCollection
+from elastica_jax import JAXOps, NoOpsJax
 from elastica_jax.memory_block.block_factory import configure_rod_block
-from elastica.modules import BaseSystemCollection, JAXOps
 from elastica.rod.cosserat_rod import CosseratRod
 
 
@@ -54,7 +54,7 @@ def test_jax_ops_finalize_wraps_rod_view_into_stage_operator():
 
         rod = _build_rod()
         simulator.append(rod)
-        simulator.using(rod).operate(_AddGravityLikeLoad, 2.5)
+        simulator.operate(rod).using(_AddGravityLikeLoad, 2.5)
         simulator.finalize()
 
         systems = tuple(simulator.final_systems())

@@ -10,7 +10,7 @@ jax.config.update("jax_enable_x64", True)
 
 CPU_DEVICE = jax.devices("cpu")[0]
 
-from elastica._jax_calculus import (
+from elastica_jax._calculus import (
     _jax_trapezoidal,
     _jax_two_point_difference,
     _jax_trapezoidal_for_block_structure,
