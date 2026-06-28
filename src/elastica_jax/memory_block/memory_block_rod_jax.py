@@ -116,7 +116,7 @@ class JAXRodView:
     ) -> None:
         object.__setattr__(self, "_state", state)
         object.__setattr__(self, "_metadata", metadata)
-        object.__setattr__(self, "_updates", {} if updates is None else dict(updates))
+        object.__setattr__(self, "_updates", {} if updates is None else updates)
 
     def __getattr__(self, attr: str) -> object:
         if attr.startswith("_"):

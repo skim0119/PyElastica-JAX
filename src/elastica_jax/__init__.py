@@ -1,5 +1,6 @@
 from elastica_jax.modules.jax_ops import JAXOps
 from elastica_jax.modules.jax_ops_block import JAXOpsBlock
+from elastica_jax.modules.jax_ops_rod_rod_block import JAXInteraction
 from elastica_jax.modules.jax_ops_rod_rigid_body import JAXOpsRodRigidBody
 
 from elastica_jax.timestepper.jax_steppers import PositionVerletJAX
@@ -39,8 +40,5 @@ from elastica_jax.checkpoint import (
     read_block_checkpoint_layout,
     save_block_checkpoint,
 )
-from elastica_jax.rod_rod_operation import (
-    JAXRodRodBlockMetadata,
-    NoRodRodBlockOpJax,
-)
+from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 from elastica_jax.rod_rigid_body_operation import NoRodRigidBodyJax
