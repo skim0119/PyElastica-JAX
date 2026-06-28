@@ -28,3 +28,5 @@
     class MyClass[T]:
         def __init__(self, value: T):
     ```
+
+- Function is named `jax_` prefix when it is meant to be pure JAX function.
