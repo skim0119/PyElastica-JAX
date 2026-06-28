@@ -21,7 +21,6 @@ import numpy as np
 from frame_io import list_frame_paths, load_frame_positions, load_simulation_metadata
 from simulation_runtime import (
     png_dir_for,
-    render_output_options,
     resolve_output_dir,
     video_path_for,
 )
@@ -34,23 +33,7 @@ def _third_axis(axis_a: int, axis_b: int) -> int:
 
 
 def _view_definitions(case: str) -> tuple[dict[str, object], dict[str, object]]:
-    if case == "snake-on-plane":
-        return (
-            {
-                "axis_a": 0,
-                "axis_b": 2,
-                "label_a": "x",
-                "label_b": "z",
-                "name": "Top view",
-            },
-            {
-                "axis_a": 0,
-                "axis_b": 1,
-                "label_a": "x",
-                "label_b": "y",
-                "name": "Side view",
-            },
-        )
+    del case
     return (
         {"axis_a": 0, "axis_b": 1, "label_a": "x", "label_b": "y", "name": "Top view"},
         {"axis_a": 0, "axis_b": 2, "label_a": "x", "label_b": "z", "name": "Side view"},
@@ -236,7 +219,17 @@ def _run_ffmpeg(
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@render_output_options
+@click.option(
+    "--run-name",
+    default=None,
+    help='Read from "output" or "output_<run-name>" (must match the simulation run).',
+)
+@click.option("--dpi", default=150, show_default=True)
+@click.option(
+    "--skip-ffmpeg",
+    is_flag=True,
+    help="Only render PNG frames and skip ffmpeg assembly.",
+)
 def main(
     run_name: str | None,
     dpi: int,

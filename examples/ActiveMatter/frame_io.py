@@ -9,14 +9,12 @@ from typing import TYPE_CHECKING, Any
 import h5py
 import numpy as np
 
-from frame_io_workers import write_rod_chunk
-
 if TYPE_CHECKING:
     import elastica_jax as eaj
 
 
 def extract_stacked_positions(
-    block: eaj.MemoryBlockCosseratRodJax,
+    block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
     *,
     n_snakes: int,
 ) -> np.ndarray:
@@ -32,6 +30,19 @@ def extract_stacked_positions(
         end = int(block.end_idx_in_rod_nodes[rod_idx])
         stacked[rod_idx] = positions[:, start:end].T
     return stacked
+
+
+def write_rod_chunk(
+    frame_path: str,
+    rod_start: int,
+    rod_end: int,
+    positions_chunk: np.ndarray,
+    write_lock,
+) -> int:
+    with write_lock:
+        with h5py.File(frame_path, "a") as handle:
+            handle["positions"][rod_start:rod_end] = positions_chunk
+    return rod_end - rod_start
 
 
 def save_frame_positions(

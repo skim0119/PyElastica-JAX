@@ -364,6 +364,23 @@ class PositionVerletJAX:
     ) -> float:
         """
         Integrate Position Verlet steps from ``time`` to ``final_time`` with step ``dt``.
+
+        Parameters
+        ----------
+        SystemCollection
+            Finalized simulator exposing JAX block and stage transforms.
+        time
+            Current simulation time.
+        final_time
+            Target simulation time. Must differ from ``time`` by an integer
+            multiple of ``dt``.
+        dt
+            Fixed Position Verlet step size.
+
+        Returns
+        -------
+        float
+            Final simulation time reached by the rollout.
         """
         assert dt > 0.0, "dt must be positive."
         assert final_time >= time, "final_time must be greater than or equal to time."
