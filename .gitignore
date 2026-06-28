@@ -7,6 +7,8 @@ __pycache__/
 *.so
 
 *.swp
+*.h5
+*.hdf5
 .vscode
 docs/_gallery
 docs/gen_modules

@@ -35,7 +35,7 @@ The intended workflow is:
 3. Configure the block with `configure_rod_block`.
 4. Register operators before `finalize()`:
    - rod-local: `simulator.operate(rod).using(OpClass, ...)`
-   - block-wide: `simulator.operate_block(ea.CosseratRod).using(OpClass, ...)`
+   - block-wide: `simulator.operate_block(rod_block).using(OpClass, ...)`
 5. Call `finalize()`, which packs rods into a block and lowers registered operators.
 6. Run `eaj.PositionVerletJAX().integrate(...)`.
 

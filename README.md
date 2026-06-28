@@ -5,6 +5,8 @@
 JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) framework for simulating assemblies of Cosserat Rods.
 This framework extension supports more directly handling of the `block` concept.
 
+The goal is to scale. If your problem is on order of 100~ elements, this framework might not give any speed-up, but you are welcome to still explore the features.
+
 > Currently under development. All features are experimental, and interface are subject to change without detailed discussion. Please leave issues if you have any suggestions or recommendations.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
 
@@ -244,7 +246,7 @@ simulator.enable_block_supports(ea.CosseratRod, rod_block)
 for _ in range(n_rods):
     simulator.append(ea.CosseratRod.straight_rod(...))
 
-simulator.operate_block(eaj.MemoryBlockCosseratRodJax).using(
+simulator.operate_block(rod_block).using(
     MyBlockOperation,
     ...  # Arguments for MyBlockOperation
 )
@@ -270,6 +272,7 @@ Block-wide gravity on all rods and one-end-fixed on each rods:
 type Vector = jax.Array
 type Director = jax.Array
 
+# class GravityBlockOp:
 class GravityBlockOp(eaj.NoBlockOpJax):
     def __init__(self, acc_gravity: Vector, tip_position: Vector, tip_director: Director) -> None:
         self.acc_gravity = acc_gravity
@@ -297,7 +300,7 @@ class GravityBlockOp(eaj.NoBlockOpJax):
         return updated
 
 
-simulator.operate_block(eaj.MemoryBlockCosseratRodJax).using(
+simulator.operate_block(rod_block).using(
     GravityBlockOp,
     acc_gravity=jnp.array([0.0, 0.0, -9.80665]),
     tip_position=jnp.array([0.0, 0.0, 0.0]),
@@ -319,26 +322,46 @@ simulator.enable_block_supports(ea.CosseratRod, rod_block)
 simulator.finalize()
 ```
 
-### Sharded Block — multi-device execution
+### Multi-device Block Execution
 
-For many rods spread across multiple GPUs (or TPUs), configure a sharded block with an execution mesh:
+> Work-in-progress
+
+Use separate blocks when each rod group is independent. Each block is assigned to
+one device and compiled as its own JIT `fori_loop` rollout:
 
 ```py
-devices = jax.devices("cuda")  # list of multiple devices
+devices = eaj.resolve_backend_devices("cuda")
+block_0 = eaj.configure_rod_block(device=devices[0])
+block_1 = eaj.configure_rod_block(device=devices[1])
+
+# Distinct rod types select which configured block owns each rod.
+simulator.enable_block_supports(RodTypeOnGPU0, block_0)
+simulator.enable_block_supports(RodTypeOnGPU1, block_1)
+simulator.operate_block(block_0).using(MyBlockOp)
+simulator.operate_block(block_1).using(MyBlockOp)
+```
+
+See the [explicit multi-block tutorial](tutorial/01-block-multi-device.py) for a
+complete example.
+
+Use one sharded block when the rods should remain one logical block. Rods are split
+evenly across the requested devices:
+
+```py
+devices = eaj.resolve_backend_devices("cuda")[:2]
 rod_block = eaj.configure_rod_block_sharded(
     devices=devices,
     device_dtype=np.float64,
 )
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
+simulator.operate_block(rod_block).using(MyBlockOp)
 ```
 
-To emulate multi-device scenario on CPU, set the number of devices to be used for execution.
+See the [sharded block tutorial](tutorial/02-block-multi-device-sharded.py) for a
+complete example.
 
-```py
-import os
-
-os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
-```
+Both layouts run compiled loops without a Python timestep fallback. Cross-device
+operators that couple independent blocks are currently rejected.
 
 ### Multi-core Multi-host CPU Execution
 
