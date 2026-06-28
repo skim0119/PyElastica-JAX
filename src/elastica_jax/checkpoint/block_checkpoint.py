@@ -18,7 +18,6 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
     _ShardedCosseratRodBlock,
-    is_sharded_block_state,
 )
 
 CHECKPOINT_VERSION = 1
@@ -142,39 +141,31 @@ def execution_mesh_for_block_checkpoint(
     mesh_name: str,
     backend: str,
     n_rods: int,
-):
-    """Resolve an execution mesh, using checkpoint layout when the file exists."""
-    from elastica_jax.execution_mesh import ExecutionMesh
+) -> tuple[jax.Device, ...]:
+    """Resolve JAX devices for a sharded block, guided by checkpoint layout when present."""
     from elastica_jax.memory_block.block_factory import resolve_backend_devices
 
     checkpoint_path = Path(block_checkpoint)
+    devices = resolve_backend_devices(backend)
     if not checkpoint_path.is_file():
         if mesh_name == "unified":
-            devices = resolve_backend_devices(backend)
-            return ExecutionMesh.from_devices(devices[:1], n_rods=n_rods)
+            return devices[:1]
         if mesh_name == "auto":
-            devices = resolve_backend_devices(backend)
-            return ExecutionMesh.from_devices(devices, n_rods=n_rods)
+            return devices
         raise ValueError(f"Unsupported mesh option {mesh_name!r}.")
 
     layout = read_block_checkpoint_layout(checkpoint_path)
     if mesh_name == "unified":
-        devices = resolve_backend_devices(backend)
-        mesh = ExecutionMesh.from_devices(devices[:1], n_rods=layout.n_rods)
+        resolved = devices[:1]
     elif mesh_name == "auto":
-        devices = resolve_backend_devices(backend)
-        mesh = ExecutionMesh.from_devices(devices, n_rods=layout.n_rods)
+        resolved = devices[: layout.n_shards]
     else:
         raise ValueError(f"Unsupported mesh option {mesh_name!r}.")
-    assert mesh.n_shards == layout.n_shards, (
+    assert len(resolved) == layout.n_shards, (
         f"Checkpoint expects {layout.n_shards} shards, but mesh={mesh_name!r} "
-        f"resolved to {mesh.n_shards}."
+        f"resolved to {len(resolved)} devices."
     )
-    if layout.rod_to_shard is not None:
-        assert np.array_equal(
-            mesh.rod_to_shard, layout.rod_to_shard
-        ), "Execution mesh rod sharding does not match the block checkpoint."
-    return mesh
+    return tuple(resolved)
 
 
 def _shard_group_name(shard_index: int) -> str:
@@ -210,7 +201,7 @@ def save_block_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if isinstance(block, _ShardedCosseratRodBlock):
-        n_shards = block.mesh.n_shards
+        n_shards = block.n_shards
         n_rods = block.n_rods
         dtype = str(block.device_dtype)
         shard_payloads = [
@@ -229,7 +220,7 @@ def save_block_checkpoint(
         handle.attrs["n_shards"] = n_shards
         handle.attrs["dtype"] = dtype
         if isinstance(block, _ShardedCosseratRodBlock):
-            rod_to_shard = block.mesh.rod_to_shard
+            rod_to_shard = block.rod_to_shard
         else:
             rod_to_shard = np.zeros(n_rods, dtype=np.int32)
         handle.create_dataset("rod_to_shard", data=rod_to_shard)
@@ -309,8 +300,8 @@ def apply_block_checkpoint_to_sharded_block(
     path = Path(path)
     layout = read_block_checkpoint_layout(path)
     assert (
-        layout.n_shards == block.mesh.n_shards
-    ), "Checkpoint shard count does not match the execution mesh."
+        layout.n_shards == block.n_shards
+    ), "Checkpoint shard count does not match the sharded block."
     assert (
         layout.n_rods == block.n_rods
     ), "Checkpoint rod count does not match the sharded block."
@@ -319,8 +310,8 @@ def apply_block_checkpoint_to_sharded_block(
             shard_block,
             path,
             shard_index=shard_index,
-            device=block.mesh.devices[shard_index],
+            device=block._devices[shard_index],
         )
     state = block.jax_get_state()
-    if is_sharded_block_state(state):
+    if state.get(SHARDED_STATE_KEY, False):
         block.jax_set_state(state)

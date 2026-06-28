@@ -1,67 +1,70 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import jax
 
 jax.config.update("jax_enable_x64", True)
 
-import elastica as ea
-import elastica_jax as eaj
+import elastica as ea  # noqa: E402
+import elastica_jax as eaj  # noqa: E402
+
+
+def _two_straight_rods() -> tuple[list[ea.CosseratRod], list[int]]:
+    rods = [
+        ea.CosseratRod.straight_rod(
+            4,
+            np.zeros(3),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+            0.5,
+            0.01,
+            1000.0,
+            youngs_modulus=1.0e6,
+            shear_modulus=1.0e6 / 1.5,
+        ),
+        ea.CosseratRod.straight_rod(
+            4,
+            np.array([0.1, 0.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+            0.5,
+            0.01,
+            1000.0,
+            youngs_modulus=1.0e6,
+            shear_modulus=1.0e6 / 1.5,
+        ),
+    ]
+    return rods, [0, 1]
 
 
 def _make_two_rod_block(
-    mesh: eaj.ExecutionMesh,
+    devices: Sequence[jax.Device],
 ) -> eaj._ShardedCosseratRodBlock:
-    rod_block_cls = eaj.configure_rod_block_sharded(mesh=mesh, device_dtype=np.float64)
-    return rod_block_cls(
-        [
-            ea.CosseratRod.straight_rod(
-                4,
-                np.zeros(3),
-                np.array([0.0, 0.0, 1.0]),
-                np.array([0.0, 1.0, 0.0]),
-                0.5,
-                0.01,
-                1000.0,
-                youngs_modulus=1.0e6,
-                shear_modulus=1.0e6 / 1.5,
-            ),
-            ea.CosseratRod.straight_rod(
-                4,
-                np.array([0.1, 0.0, 0.0]),
-                np.array([0.0, 0.0, 1.0]),
-                np.array([0.0, 1.0, 0.0]),
-                0.5,
-                0.01,
-                1000.0,
-                youngs_modulus=1.0e6,
-                shear_modulus=1.0e6 / 1.5,
-            ),
-        ],
-        [0, 1],
+    rod_block_cls = eaj.configure_rod_block_sharded(
+        devices=devices,
+        device_dtype=np.float64,
     )
+    rods, system_idx = _two_straight_rods()
+    return rod_block_cls(rods, system_idx)
 
 
-def test_sharded_block_unified_state_matches_primary() -> None:
-    mesh = eaj.ExecutionMesh.from_devices(
-        [jax.devices("cpu")[0]],
-        n_rods=2,
-    )
-    block = _make_two_rod_block(mesh)
-    state = block.jax_get_state()
-    assert not eaj.is_sharded_block_state(state)
-    primary = block._primary_block.jax_get_state()
-    assert set(state) == set(primary)
+def _make_two_rod_memory_block(
+    device: jax.Device,
+) -> eaj._CosseratRodMemoryBlock:
+    rod_block_cls = eaj.configure_rod_block(device=device, device_dtype=np.float64)
+    rods, system_idx = _two_straight_rods()
+    return rod_block_cls(rods, system_idx)
 
 
 def test_sharded_block_splits_across_devices_when_mesh_has_two_shards() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     state = block.jax_get_state()
-    assert eaj.is_sharded_block_state(state)
+    assert "shards" in state
     assert len(state["shards"]) == 2
     assert (
         state["shards"][0]["position_collection"].devices()
@@ -73,8 +76,7 @@ def test_sharded_position_collection_device_lives_on_primary_shard() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     positions = block.position_collection_device
     assert positions.shape == block.position_collection.shape
     assert positions.device == devices[0]
@@ -90,8 +92,7 @@ def test_sharded_merge_shard_states_concatenates_on_primary_device() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     state = block.jax_get_state()
     merged = block.merge_shard_states(state)
     assert merged["position_collection"].device == devices[0]
@@ -102,8 +103,7 @@ def test_sharded_scatter_merged_state_returns_shard_local_devices() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     state = block.jax_get_state()
     merged = block.merge_shard_states(state)
     scattered = block.scatter_merged_state(merged, state)
@@ -118,8 +118,7 @@ def test_sharded_merge_scatter_roundtrip_preserves_array_shapes() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     state = block.jax_get_state()
     merged = block.merge_shard_states(state)
     scattered = block.scatter_merged_state(merged, state)
@@ -144,8 +143,7 @@ def test_wrap_jax_block_operator_handles_sharded_state() -> None:
         return
     from elastica_jax.modules.jax_ops_block import JAXOpsBlock
 
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     state = block.jax_get_state()
 
     def identity_operator(merged_state, time):
@@ -159,23 +157,20 @@ def test_wrap_jax_block_operator_handles_sharded_state() -> None:
         operator=identity_operator,
     )
     updated = wrapped(states=(state,), time=np.float64(0.0))
-    assert eaj.is_sharded_block_state(updated[0])
+    assert "shards" in updated[0]
 
 
 def test_sharded_block_exposes_global_rest_lengths_view() -> None:
     devices = jax.devices("cpu")
     if len(devices) < 2:
         return
-    mesh = eaj.ExecutionMesh.for_n_rods(2, devices=devices[:2])
-    block = _make_two_rod_block(mesh)
+    block = _make_two_rod_block(devices[:2])
     expected = np.concatenate(
         [shard_block.rest_lengths for shard_block in block._shard_blocks]
     )
     assert np.array_equal(block.rest_lengths, expected)
 
-    unified_block = _make_two_rod_block(
-        eaj.ExecutionMesh.from_devices([devices[0]], n_rods=2)
-    )
+    unified_block = _make_two_rod_memory_block(devices[0])
     for rod_index in range(block.n_rods):
         sharded_start = int(block.start_idx_in_rod_elems[rod_index])
         sharded_end = int(block.end_idx_in_rod_elems[rod_index])
@@ -185,3 +180,68 @@ def test_sharded_block_exposes_global_rest_lengths_view() -> None:
             block.rest_lengths[sharded_start:sharded_end],
             unified_block.rest_lengths[unified_start:unified_end],
         )
+
+
+def test_sharded_from_device_all_rods() -> None:
+    devices = jax.devices("cpu")
+    if len(devices) < 2:
+        return
+
+    class Simulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+        pass
+
+    simulator = Simulator()
+    rod_block = eaj.configure_rod_block_sharded(
+        devices=devices[:2], device_dtype=np.float64
+    )
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
+    rods = [
+        ea.CosseratRod.straight_rod(
+            4,
+            np.zeros(3),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+            0.5,
+            0.01,
+            1000.0,
+            youngs_modulus=1.0e6,
+            shear_modulus=1.0e6 / 1.5,
+        ),
+        ea.CosseratRod.straight_rod(
+            4,
+            np.array([0.1, 0.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+            0.5,
+            0.01,
+            1000.0,
+            youngs_modulus=1.0e6,
+            shear_modulus=1.0e6 / 1.5,
+        ),
+    ]
+    for rod in rods:
+        rod.external_forces[1, :] = 25.0
+        simulator.append(rod)
+    simulator.finalize()
+
+    initial_positions = [rod.position_collection.copy() for rod in rods]
+    eaj.PositionVerletJAX().integrate(
+        simulator,
+        time=0.0,
+        final_time=0.005,
+        dt=0.001,
+    )
+
+    rod_block.from_device()
+    integrated = [rod.position_collection.copy() for rod in rods]
+    assert all(
+        not np.allclose(current, initial)
+        for current, initial in zip(integrated, initial_positions, strict=True)
+    )
+
+    for rod in rods:
+        rod.position_collection.fill(0.0)
+
+    rod_block.from_device()
+    for rod, expected in zip(rods, integrated, strict=True):
+        np.testing.assert_allclose(rod.position_collection, expected)

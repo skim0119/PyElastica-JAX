@@ -30,7 +30,7 @@ from elastica_jax.contact import (
 from elastica_jax.execution_mesh import ExecutionMesh
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     _ShardedCosseratRodBlock,
-    is_sharded_block_state,
+    SHARDED_STATE_KEY,
 )
 from elastica_jax.checkpoint import (
     BlockCheckpointLayout,

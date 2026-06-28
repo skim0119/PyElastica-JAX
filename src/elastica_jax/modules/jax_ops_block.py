@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from itertools import chain
-from typing import Any, Type
+from collections.abc import Callable
+from typing import Any, Protocol, Type
 
 from elastica_jax.block_operation import NoBlockOpJax
 from elastica_jax.operations import NoOpsJax
@@ -15,8 +15,8 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
     _ShardedCosseratRodBlock,
-    is_sharded_block_state,
 )
+from elastica_jax.protocol import JAXBlockExecution, JAXBlockStages
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -45,6 +45,21 @@ _BLOCK_STAGE_METHODS = (
         "jax_operate_constrain_rates",
     ),
 )
+
+
+class JAXBlockOpTarget(Protocol):
+    """
+    Configured rod block registered with ``enable_block_supports``.
+
+    Pass the same instance to ``operate_block`` before ``finalize()``.
+    After ``finalize()``, that object is the built block in ``final_systems()``.
+    """
+
+    def __call__(
+        self,
+        systems: list[Any],
+        system_idx_list: list[Any],
+    ) -> Any: ...
 
 
 class _PerRodStateView:
@@ -96,15 +111,17 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     scattering the updated rod-local fields back once per stage.
     """
 
-    _jax_block_ops_list: list[ModuleProtocol]
+    _jax_block_ops_list: list[_JAXBlockOp]
 
     def __init__(self) -> None:
         self._jax_block_ops_list = []
+        self._jax_local_block_stages: dict[int, dict[str, list[Any]]] = {}
+        self._jax_local_shard_stages: dict[int, tuple[dict[str, list[Any]], ...]] = {}
         super().__init__()
         self._feature_group_finalize.append(self._finalize_jax_block_ops)
 
-    def operate_block(self, target: JAXBlockOpTarget) -> ModuleProtocol:
-        jax_op: ModuleProtocol = _JAXBlockOp(target)
+    def operate_block(self, target: JAXBlockOpTarget | Type[Any]) -> ModuleProtocol:
+        jax_op = _JAXBlockOp(target)
         self._jax_block_ops_list.append(jax_op)
         return jax_op
 
@@ -115,10 +132,10 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         block_state_idx: int,
         block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
         operator: Any,
-    ):
+    ) -> Callable[..., tuple[Any, ...]]:
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             block_state = states[block_state_idx]
-            if is_sharded_block_state(block_state):
+            if block_state.get(SHARDED_STATE_KEY, False):
                 assert isinstance(block_system, _ShardedCosseratRodBlock)
                 merged = block_system.merge_shard_states(block_state)
                 updated_state = block_system.scatter_merged_state(
@@ -130,6 +147,15 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             updated_states = list(states)
             updated_states[block_state_idx] = updated_state
             return tuple(updated_states)
+
+        return apply
+
+    @staticmethod
+    def _wrap_local_jax_block_operator(
+        operator: Any,
+    ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
+        def apply(state: dict[str, Any], time: Any) -> dict[str, Any]:
+            return operator(state, time)
 
         return apply
 
@@ -210,7 +236,9 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         attrs = tuple(_SYNCABLE_ATTRS)
         operator_list = (operators,) if not isinstance(operators, tuple) else operators
 
-        def commit_view(updated_view: Any, rod_view: _PerRodStateView) -> dict[str, Any]:
+        def commit_view(
+            updated_view: Any, rod_view: _PerRodStateView
+        ) -> dict[str, Any]:
             if isinstance(updated_view, _PerRodStateView):
                 return updated_view.commit()
             if hasattr(updated_view, "commit"):
@@ -224,16 +252,12 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             per_rod_operators: tuple[Any, ...],
         ) -> dict[str, Any]:
             local_state = {
-                attr: cls._gather_attr(
-                    working_state[attr], indices[attr_domains[attr]]
-                )
+                attr: cls._gather_attr(working_state[attr], indices[attr_domains[attr]])
                 for attr in attrs
             }
             updated_rods: list[dict[str, Any]] = []
             for rod_index, operator in enumerate(per_rod_operators):
-                single_state = {
-                    attr: local_state[attr][rod_index] for attr in attrs
-                }
+                single_state = {attr: local_state[attr][rod_index] for attr in attrs}
                 rod_view = _PerRodStateView(single_state)
                 updated_view = operator(rod_view, time)
                 updated_rods.append(commit_view(updated_view, rod_view))
@@ -250,7 +274,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 )
             return updated_block_state
 
-        if is_sharded_block_state(block_state):
+        if block_state.get(SHARDED_STATE_KEY, False):
             assert isinstance(block_system, _ShardedCosseratRodBlock)
             updated_shards = []
             rod_offset = 0
@@ -285,7 +309,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         block_state_idx: int,
         block_system: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
         operators: Any | tuple[Any, ...],
-    ):
+    ) -> Callable[..., tuple[Any, ...]]:
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             block_state = states[block_state_idx]
             updated_block_state = cls._apply_per_rod_operator_to_block_state(
@@ -297,6 +321,23 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             updated_states = list(states)
             updated_states[block_state_idx] = updated_block_state
             return tuple(updated_states)
+
+        return apply
+
+    @classmethod
+    def _wrap_local_jax_per_rod_operator(
+        cls,
+        *,
+        block_system: _CosseratRodMemoryBlock,
+        operators: Any | tuple[Any, ...],
+    ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
+        def apply(state: dict[str, Any], time: Any) -> dict[str, Any]:
+            return cls._apply_per_rod_operator_to_block_state(
+                block_system=block_system,
+                block_state=state,
+                operators=operators,
+                time=time,
+            )
 
         return apply
 
@@ -352,15 +393,48 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 "block operator methods. Use one constructor contract."
             )
 
-            instantiate_target = block_system
+            instantiate_target: Any = block_system
+            shard_op_instances: tuple[Any, ...] = ()
+            shard_per_rod_operators: tuple[tuple[Any, ...], ...] = ()
             per_rod_operators: tuple[Any, ...] | None = None
             if instantiate_with_representative_rod:
-                per_rod_operators = tuple(
-                    jax_op.instantiate(block_system._systems[rod_index])
-                    for rod_index in range(block_system.n_rods)
-                )
+                if isinstance(block_system, _ShardedCosseratRodBlock):
+                    shard_per_rod_operators = tuple(
+                        tuple(jax_op.instantiate(rod) for rod in shard._systems)
+                        for shard in block_system._shard_blocks
+                    )
+                    per_rod_operators = tuple(
+                        operator
+                        for shard_operators in shard_per_rod_operators
+                        for operator in shard_operators
+                    )
+                else:
+                    per_rod_operators = tuple(
+                        jax_op.instantiate(rod) for rod in block_system._systems
+                    )
                 instantiate_target = block_system._systems[0]
             op_instance = jax_op.instantiate(instantiate_target)
+            if (
+                isinstance(block_system, _ShardedCosseratRodBlock)
+                and instantiate_with_block
+            ):
+                shard_op_instances = tuple(
+                    jax_op.instantiate(shard) for shard in block_system._shard_blocks
+                )
+
+            local_stages = self._jax_local_block_stages.setdefault(
+                block_state_idx,
+                {stage: [] for stage, *_ in _BLOCK_STAGE_METHODS},
+            )
+            shard_stages: tuple[dict[str, list[Any]], ...] = ()
+            if isinstance(block_system, _ShardedCosseratRodBlock):
+                shard_stages = self._jax_local_shard_stages.setdefault(
+                    block_state_idx,
+                    tuple(
+                        {stage: [] for stage, *_ in _BLOCK_STAGE_METHODS}
+                        for _ in block_system._shard_blocks
+                    ),
+                )
 
             for (
                 stage,
@@ -381,12 +455,26 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 ) is not getattr(NoOpsJax, legacy_method_name)
 
                 if has_block:
+                    operator = getattr(op_instance, block_method_name)
                     wrapped = self._wrap_jax_block_operator(
                         block_state_idx=block_state_idx,
                         block_system=block_system,
-                        operator=getattr(op_instance, block_method_name),
+                        operator=operator,
                     )
                     staged_wrappers.append((stage, wrapped))
+                    if isinstance(block_system, _ShardedCosseratRodBlock):
+                        for shard_stage_map, shard_instance in zip(
+                            shard_stages, shard_op_instances, strict=True
+                        ):
+                            shard_stage_map[stage].append(
+                                self._wrap_local_jax_block_operator(
+                                    getattr(shard_instance, block_method_name)
+                                )
+                            )
+                    else:
+                        local_stages[stage].append(
+                            self._wrap_local_jax_block_operator(operator)
+                        )
                     continue
 
                 if has_per_rod or has_legacy:
@@ -406,6 +494,36 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                         operators=operators,
                     )
                     staged_wrappers.append((stage, wrapped))
+                    if isinstance(block_system, _ShardedCosseratRodBlock):
+                        for shard_index, (shard_stage_map, shard_block) in enumerate(
+                            zip(
+                                shard_stages,
+                                block_system._shard_blocks,
+                                strict=True,
+                            )
+                        ):
+                            if has_legacy:
+                                shard_operators = tuple(
+                                    getattr(operator, method_name)
+                                    for operator in shard_per_rod_operators[shard_index]
+                                )
+                            else:
+                                shard_operators = getattr(
+                                    shard_op_instances[shard_index], method_name
+                                )
+                            shard_stage_map[stage].append(
+                                self._wrap_local_jax_per_rod_operator(
+                                    block_system=shard_block,
+                                    operators=shard_operators,
+                                )
+                            )
+                    else:
+                        local_stages[stage].append(
+                            self._wrap_local_jax_per_rod_operator(
+                                block_system=block_system,
+                                operators=operators,
+                            )
+                        )
 
             assert staged_wrappers, (
                 f"{type(op_instance)} does not define any JAX block stage methods. "
@@ -421,6 +539,77 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         self._jax_block_ops_list = []
         del self._jax_block_ops_list
 
+    def jax_independent_block_executions(
+        self,
+    ) -> tuple[JAXBlockExecution, ...] | None:
+        """
+        Return block-local execution stages when no cross-block operators exist.
+
+        Returns
+        -------
+        tuple[JAXBlockExecution, ...] | None
+            One execution description per finalized block. ``None`` indicates that
+            at least one registered stage operator couples block states.
+        """
+        stage_groups = {
+            "constrain_values": self._feature_group_constrain_values,
+            "synchronize": self._feature_group_synchronize,
+            "constrain_rates": self._feature_group_constrain_rates,
+        }
+        registered_counts = {
+            stage: sum(
+                len(stage_map[stage])
+                for stage_map in self._jax_local_block_stages.values()
+            )
+            + sum(
+                len(shard_stage_maps[0][stage])
+                for shard_stage_maps in self._jax_local_shard_stages.values()
+            )
+            for stage in stage_groups
+        }
+        actual_counts = {
+            stage: sum(1 for _ in group) for stage, group in stage_groups.items()
+        }
+        actual_counts["constrain_rates"] += sum(1 for _ in self._feature_group_damping)
+        if registered_counts != actual_counts:
+            return None
+
+        executions = []
+        for block_state_idx, system in enumerate(self.final_systems()):
+            stage_map = self._jax_local_block_stages.get(
+                block_state_idx,
+                {stage: [] for stage in stage_groups},
+            )
+            stages = self._make_block_stages(stage_map)
+            shard_stage_maps = self._jax_local_shard_stages.get(block_state_idx)
+            if shard_stage_maps is None and isinstance(
+                system, _ShardedCosseratRodBlock
+            ):
+                shard_stage_maps = tuple(
+                    {stage: [] for stage in stage_groups} for _ in system._shard_blocks
+                )
+            executions.append(
+                JAXBlockExecution(
+                    stages=stages,
+                    shard_stages=(
+                        tuple(
+                            self._make_block_stages(item) for item in shard_stage_maps
+                        )
+                        if shard_stage_maps is not None
+                        else None
+                    ),
+                )
+            )
+        return tuple(executions)
+
+    @staticmethod
+    def _make_block_stages(stage_map: dict[str, list[Any]]) -> JAXBlockStages:
+        return JAXBlockStages(
+            constrain_values=tuple(stage_map["constrain_values"]),
+            synchronize=tuple(stage_map["synchronize"]),
+            constrain_rates=tuple(stage_map["constrain_rates"]),
+        )
+
     def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
         assert stage in (
             "constrain_values",
@@ -434,7 +623,21 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         return self._feature_group_constrain_rates
 
     @staticmethod
-    def _find_target_block(final_systems, target_type):  # type: ignore[no-untyped-def]
+    def _find_target_block(
+        final_systems: tuple[Any, ...],
+        target: JAXBlockOpTarget | Type[Any],
+    ) -> tuple[int, _CosseratRodMemoryBlock | _ShardedCosseratRodBlock]:
+        if not isinstance(target, type):
+            for block_state_idx, system in enumerate(final_systems):
+                if system is target:
+                    return block_state_idx, system
+            raise RuntimeError(
+                "Requested JAX block operator target was not found in finalized "
+                "block systems. Pass the same block instance registered with "
+                "`enable_block_supports(...)`."
+            )
+
+        target_type = target
         for block_state_idx, system in enumerate(final_systems):
             if not isinstance(
                 system, (_CosseratRodMemoryBlock, _ShardedCosseratRodBlock)
@@ -456,8 +659,8 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
 
 class _JAXBlockOp:
-    def __init__(self, target_type: Type[Any]) -> None:
-        self._target_type = target_type
+    def __init__(self, target: JAXBlockOpTarget | Type[Any]) -> None:
+        self._target = target
         self._op_cls: Type[Any]
         self._args: Any
         self._kwargs: Any
@@ -476,8 +679,8 @@ class _JAXBlockOp:
         self._args = args
         self._kwargs = kwargs
 
-    def target(self) -> Type[Any]:
-        return self._target_type
+    def target(self) -> JAXBlockOpTarget | Type[Any]:
+        return self._target
 
     def operator_cls(self) -> Type[Any]:
         if not hasattr(self, "_op_cls"):
@@ -488,7 +691,7 @@ class _JAXBlockOp:
         return self._op_cls
 
     def id(self) -> Any:
-        return self._target_type
+        return self._target
 
     def instantiate(self, system: Any) -> Any:
         if not hasattr(self, "_op_cls"):

@@ -19,7 +19,6 @@ from elastica_jax.contact.spatial_hash import (
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
-    is_sharded_block_state,
 )
 
 if TYPE_CHECKING:
@@ -143,7 +142,7 @@ def install_capsule_contact_state(
         metadata, device=device, dtype=dtype
     )
     state = block.jax_get_state()
-    if is_sharded_block_state(state):
+    if state.get(SHARDED_STATE_KEY, False):
         shard_states = list(state["shards"])
         shard_states[0] = {**shard_states[0], **contact_state}
         block.jax_set_state({SHARDED_STATE_KEY: True, "shards": tuple(shard_states)})
@@ -346,7 +345,7 @@ class CapsuleContactOp(NoBlockOpJax):
         self._rod_ids = jnp.asarray(metadata.rod_ids)
 
     def jax_block_operate_synchronize(self, state, time):
-        if is_sharded_block_state(state):
+        if state.get(SHARDED_STATE_KEY, False):
             from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
                 _ShardedCosseratRodBlock,
             )
@@ -426,7 +425,7 @@ class WallContactOp(NoBlockOpJax):
         self.contact_damping = contact_damping
 
     def jax_block_operate_synchronize(self, state, time):
-        if is_sharded_block_state(state):
+        if state.get(SHARDED_STATE_KEY, False):
             from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
                 _ShardedCosseratRodBlock,
             )

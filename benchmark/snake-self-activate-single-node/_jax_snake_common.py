@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Sequence
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -16,15 +16,17 @@ if str(REPO_ROOT) not in sys.path:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.append(str(SCRIPT_DIR))
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-import elastica as ea
-import elastica_jax as eaj
+import elastica as ea  # noqa: E402
+import elastica_jax as eaj  # noqa: E402
 
-import jax
-import jax.numpy as jnp
+import jax  # noqa: E402
 
-from elastica_jax._linalg import _jax_batch_cross, _jax_batch_matvec
+from snake_operation import (  # noqa: E402
+    GravityPlaneContactBlockJax,
+    SnakeMuscleTorquesBlockJax,
+)
 
 type BenchmarkTiming = tuple[float, float]
 
@@ -50,16 +52,19 @@ def default_b_coeff() -> np.ndarray:
     )
 
 
-def build_rod() -> ea.CosseratRod:
-    return ea.CosseratRod.straight_rod(
-        DEFAULT_N_ELEM,
-        np.zeros(3),
-        np.array([0.0, 0.0, 1.0]),
-        np.array([0.0, 1.0, 0.0]),
-        DEFAULT_BASE_LENGTH,
-        DEFAULT_BASE_RADIUS,
-        DEFAULT_DENSITY,
-        DEFAULT_YOUNGS_MODULUS,
+def build_rod(
+    rod_type: type[ea.CosseratRod] = ea.CosseratRod,
+) -> ea.CosseratRod:
+    """Build one benchmark rod using the requested concrete rod type."""
+    return rod_type.straight_rod(
+        n_elements=DEFAULT_N_ELEM,
+        start=np.zeros(3),
+        direction=np.array([0.0, 0.0, 1.0]),
+        normal=np.array([0.0, 1.0, 0.0]),
+        base_length=DEFAULT_BASE_LENGTH,
+        base_radius=DEFAULT_BASE_RADIUS,
+        density=DEFAULT_DENSITY,
+        youngs_modulus=DEFAULT_YOUNGS_MODULUS,
     )
 
 
@@ -71,132 +76,86 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 
-def _uniform_index_matrix(
-    start_idx: np.ndarray,
-    end_idx: np.ndarray,
-) -> np.ndarray:
-    widths = end_idx - start_idx
-    assert np.all(widths == widths[0]), "All rods must share the same discretization."
-    offsets = np.arange(int(widths[0]), dtype=np.int32)
-    return start_idx[:, None].astype(np.int32) + offsets[None, :]
+type JAXRodBlock = eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock
 
 
-def _gather_vector_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
-    return jnp.moveaxis(jnp.take(array, indices, axis=-1), 1, 0)
-
-
-def _gather_tensor_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
-    return jnp.moveaxis(jnp.take(array, indices, axis=-1), 2, 0)
-
-
-def _gather_scalar_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
-    return jnp.take(array, indices, axis=-1)
-
-
-def _scatter_set_vector_batch(
-    array: jax.Array, indices: jax.Array, values: jax.Array
-) -> jax.Array:
-    return array.at[:, indices].set(jnp.moveaxis(values, 0, 1))
-
-
-def _batch_matvec_over_rods(
-    matrix_collection: jax.Array,
-    vector_collection: jax.Array,
-) -> jax.Array:
-    return jax.vmap(_jax_batch_matvec, in_axes=(0, 0))(
-        matrix_collection, vector_collection
-    )
-
-
-def _batch_cross_over_rods(
-    first_vector_collection: jax.Array,
-    second_vector_collection: jax.Array,
-) -> jax.Array:
-    return jax.vmap(_jax_batch_cross, in_axes=(0, 0))(
-        first_vector_collection,
-        second_vector_collection,
-    )
-
-
-def _node_to_element_position_batch(position_collection: jax.Array) -> jax.Array:
-    return 0.5 * (position_collection[:, :, 1:] + position_collection[:, :, :-1])
-
-
-def _node_to_element_velocity_batch(
-    mass: jax.Array, velocity_collection: jax.Array
-) -> jax.Array:
-    numerator = (
-        mass[:, None, 1:] * velocity_collection[:, :, 1:]
-        + mass[:, None, :-1] * velocity_collection[:, :, :-1]
-    )
-    denominator = mass[:, None, 1:] + mass[:, None, :-1]
-    return numerator / denominator
-
-
-def _node_to_element_mass_or_force_batch(nodal_collection: jax.Array) -> jax.Array:
-    elemental_collection = 0.5 * (
-        nodal_collection[:, :, :-1] + nodal_collection[:, :, 1:]
-    )
-    elemental_collection = elemental_collection.at[:, :, 0].add(
-        0.5 * nodal_collection[:, :, 0]
-    )
-    elemental_collection = elemental_collection.at[:, :, -1].add(
-        0.5 * nodal_collection[:, :, -1]
-    )
-    return elemental_collection
-
-
-def _elements_to_nodes_batch(element_collection: jax.Array) -> jax.Array:
-    node_collection = jnp.zeros(
-        (
-            element_collection.shape[0],
-            element_collection.shape[1],
-            element_collection.shape[2] + 1,
-        ),
-        dtype=element_collection.dtype,
-    )
-    node_collection = node_collection.at[:, :, :-1].add(0.5 * element_collection)
-    node_collection = node_collection.at[:, :, 1:].add(0.5 * element_collection)
-    return node_collection
-
-
-def _find_slipping_elements_batch(
-    velocity_slip: jax.Array, velocity_threshold: jax.Array
-) -> jax.Array:
-    abs_velocity_slip = jnp.linalg.norm(velocity_slip, axis=1)
-    normalized = abs_velocity_slip / velocity_threshold - 1.0
-    slipped = jnp.minimum(1.0, normalized)
-    slip_function = jnp.ones_like(abs_velocity_slip)
-    slip_values = jnp.abs(1.0 - slipped)
-    return jnp.where(abs_velocity_slip > velocity_threshold, slip_values, slip_function)
-
-
-from snake_operation import GravityPlaneContactBlockJax, SnakeMuscleTorquesBlockJax
-
-
-def two_gpu_half_split_mesh(n_snakes: int) -> eaj.ExecutionMesh:
-    """Map the first half of snakes to GPU 0 and the remainder to GPU 1."""
-    assert n_snakes >= 2, "gpu2x requires at least two snakes."
+def two_gpu_sharded_devices() -> tuple[jax.Device, ...]:
+    """Use the first two CUDA devices for a balanced sharded rollout."""
     devices = eaj.resolve_backend_devices("cuda")
-    assert len(devices) >= 2, "gpu2x requires at least two CUDA devices."
-    split = n_snakes // 2
-    rod_to_shard = np.array(
-        [0] * split + [1] * (n_snakes - split),
-        dtype=np.int32,
+    assert len(devices) >= 2, "gpu2x_sharded requires at least two CUDA devices."
+    return devices[:2]
+
+
+def _distinct_cosserat_rod_types() -> tuple[type[ea.CosseratRod], type[ea.CosseratRod]]:
+    excluded_attributes = {
+        "__dict__",
+        "__weakref__",
+        "__module__",
+        "__annotations__",
+        "__doc__",
+        "__qualname__",
+    }
+    rod_attributes = {
+        name: value
+        for name, value in ea.CosseratRod.__dict__.items()
+        if name not in excluded_attributes
+    }
+    first_type = type(
+        "SnakeRodOnDevice0",
+        ea.CosseratRod.__bases__,
+        dict(rod_attributes),
     )
-    return eaj.ExecutionMesh(devices=devices[:2], rod_to_shard=rod_to_shard)
+    second_type = type(
+        "SnakeRodOnDevice1",
+        ea.CosseratRod.__bases__,
+        dict(rod_attributes),
+    )
+    return first_type, second_type
 
 
-def _block_until_ready_rod_block(
-    rod_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+def _configure_jax_block_operators(
+    simulator: JAXSimulator,
+    rod_blocks: Sequence[JAXRodBlock],
 ) -> None:
-    shard_blocks = getattr(rod_block, "_shard_blocks", None)
-    mesh = getattr(rod_block, "mesh", None)
-    if shard_blocks is not None and mesh is not None and mesh.is_sharded:
-        for shard_block in shard_blocks:
-            jax.block_until_ready(shard_block)
-        return
-    jax.block_until_ready(rod_block)
+    b_coeff = default_b_coeff()
+    period = DEFAULT_PERIOD
+    mu = DEFAULT_BASE_LENGTH / (
+        period * period * np.abs(DEFAULT_GRAVITY) * DEFAULT_FROUDE
+    )
+    kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
+    static_mu_array = np.zeros(kinetic_mu_array.shape, dtype=np.float64)
+
+    for rod_block in rod_blocks:
+        simulator.operate_block(rod_block).using(
+            SnakeMuscleTorquesBlockJax,
+            b_coeff=b_coeff,
+            period=period,
+            base_length=DEFAULT_BASE_LENGTH,
+        )
+        simulator.operate_block(rod_block).using(
+            GravityPlaneContactBlockJax,
+            plane_origin=np.array(
+                [0.0, -DEFAULT_BASE_LENGTH * 0.011, 0.0], dtype=np.float64
+            ),
+            plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
+            slip_velocity_tol=1.0e-8,
+            k=1.0,
+            nu=1.0e-6,
+            static_mu_array=static_mu_array,
+            kinetic_mu_array=kinetic_mu_array,
+        )
+        simulator.operate_block(rod_block).using(
+            eaj.AnalyticalLinearDamperJax,
+            time_step=np.float64(DEFAULT_DT),
+            damping_constant=DEFAULT_DAMPING,
+        )
+
+
+def _block_until_ready(rod_blocks: Sequence[JAXRodBlock]) -> None:
+    for rod_block in rod_blocks:
+        for leaf in jax.tree_util.tree_leaves(rod_block.jax_get_state()):
+            if hasattr(leaf, "block_until_ready"):
+                leaf.block_until_ready()
 
 
 def build_cpu_sim(
@@ -265,62 +224,74 @@ def build_cpu_sim(
 
 def build_jax_sim(
     *,
-    device: jax.Device | eaj.ExecutionMesh,
+    device: jax.Device | Sequence[jax.Device],
     device_dtype: np.dtype,
     n_snakes: int,
     sharded: bool = False,
-) -> tuple[JAXSimulator, eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock]:
+) -> tuple[JAXSimulator, JAXRodBlock]:
+    rod_block: JAXRodBlock
     if sharded:
+        devices = tuple(device) if not isinstance(device, jax.Device) else (device,)
         rod_block = eaj.configure_rod_block_sharded(
-            mesh=device,
+            devices=devices,
             device_dtype=np.dtype(device_dtype),
         )
     else:
+        assert isinstance(device, jax.Device), (
+            "A non-sharded JAX block requires exactly one device."
+        )
         rod_block = eaj.configure_rod_block(
             device=device,
             device_dtype=np.dtype(device_dtype),
         )
 
-    b_coeff = default_b_coeff()
-    period = DEFAULT_PERIOD
-    mu = DEFAULT_BASE_LENGTH / (
-        period * period * np.abs(DEFAULT_GRAVITY) * DEFAULT_FROUDE
-    )
-    kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
-    static_mu_array = np.zeros(kinetic_mu_array.shape, dtype=np.float64)
-
     sim = JAXSimulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
-    for idx in range(n_snakes):
+    for _ in range(n_snakes):
         rod = build_rod()
         sim.append(rod)
 
-    sim.operate_block(ea.CosseratRod).using(
-        SnakeMuscleTorquesBlockJax,
-        b_coeff=b_coeff,
-        period=period,
-        base_length=DEFAULT_BASE_LENGTH,
-    )
-    sim.operate_block(ea.CosseratRod).using(
-        GravityPlaneContactBlockJax,
-        plane_origin=np.array(
-            [0.0, -DEFAULT_BASE_LENGTH * 0.011, 0.0], dtype=np.float64
-        ),
-        plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
-        slip_velocity_tol=1.0e-8,
-        k=1.0,
-        nu=1.0e-6,
-        static_mu_array=static_mu_array,
-        kinetic_mu_array=kinetic_mu_array,
-    )
-    sim.operate_block(ea.CosseratRod).using(
-        eaj.AnalyticalLinearDamperJax,
-        time_step=np.float64(DEFAULT_DT),
-        damping_constant=DEFAULT_DAMPING,
-    )
+    _configure_jax_block_operators(sim, (rod_block,))
     sim.finalize()
 
     return sim, rod_block
+
+
+def build_jax_sim_gpu2x(
+    *,
+    devices: Sequence[jax.Device],
+    device_dtype: np.dtype,
+    n_snakes: int,
+) -> tuple[JAXSimulator, tuple[JAXRodBlock, JAXRodBlock]]:
+    """Build two explicitly assigned rod blocks on separate devices."""
+    assert len(devices) >= 2, "gpu2x requires at least two devices."
+    assert n_snakes >= 2, "gpu2x requires at least two snakes."
+
+    first_rod_type, second_rod_type = _distinct_cosserat_rod_types()
+    rod_blocks = (
+        eaj.configure_rod_block(
+            device=devices[0],
+            device_dtype=np.dtype(device_dtype),
+        ),
+        eaj.configure_rod_block(
+            device=devices[1],
+            device_dtype=np.dtype(device_dtype),
+        ),
+    )
+    simulator = JAXSimulator()
+    simulator.enable_block_supports(first_rod_type, rod_blocks[0])
+    simulator.enable_block_supports(second_rod_type, rod_blocks[1])
+
+    first_block_count = (n_snakes + 1) // 2
+    for snake_index in range(n_snakes):
+        rod_type = (
+            first_rod_type if snake_index < first_block_count else second_rod_type
+        )
+        simulator.append(build_rod(rod_type))
+
+    _configure_jax_block_operators(simulator, rod_blocks)
+    simulator.finalize()
+    return simulator, rod_blocks
 
 
 def time_average(n_iter: int, fn) -> float:  # type: ignore[no-untyped-def]
@@ -398,7 +369,7 @@ def run_pyelastica_rollout(
 
 def integrate_jax_block_rollout(
     jax_sim: JAXSimulator,
-    jax_block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+    jax_blocks: Sequence[JAXRodBlock],
     *,
     steps: int,
     warmup_runs: int,
@@ -412,7 +383,7 @@ def integrate_jax_block_rollout(
         final_time=time_value + warmup_runs * dt_value,
         dt=dt_value,
     )
-    _block_until_ready_rod_block(jax_block)
+    _block_until_ready(jax_blocks)
     rollout_start = time.perf_counter()
     stepper.integrate(
         jax_sim,
@@ -420,7 +391,7 @@ def integrate_jax_block_rollout(
         final_time=time_value + steps * dt_value,
         dt=dt_value,
     )
-    _block_until_ready_rod_block(jax_block)
+    _block_until_ready(jax_blocks)
     return time.perf_counter() - rollout_start
 
 
@@ -442,11 +413,11 @@ def run_jax_rollout(
             device_dtype=dtype,
             n_snakes=n_snakes,
         )
-        _block_until_ready_rod_block(jax_block)
+        _block_until_ready((jax_block,))
         instantiate_seconds = time.perf_counter() - instantiate_start
         rollout_seconds = integrate_jax_block_rollout(
             jax_sim,
-            jax_block,
+            (jax_block,),
             steps=steps,
             warmup_runs=warmup_runs,
         )
@@ -461,21 +432,22 @@ def run_jax_rollout_gpu2x_sharded(
     warmup_runs: int,
 ) -> BenchmarkTiming:
     """Build a 2-GPU sharded JAX block simulator and time a Position Verlet rollout."""
+    assert n_snakes % 2 == 0, "gpu2x_sharded requires a snake count divisible by two."
     dtype = np.dtype(np.float64)
-    mesh = two_gpu_half_split_mesh(n_snakes)
+    devices = two_gpu_sharded_devices()
 
     instantiate_start = time.perf_counter()
     jax_sim, jax_block = build_jax_sim(
-        device=mesh,
+        device=devices,
         device_dtype=dtype,
         n_snakes=n_snakes,
         sharded=True,
     )
-    _block_until_ready_rod_block(jax_block)
+    _block_until_ready((jax_block,))
     instantiate_seconds = time.perf_counter() - instantiate_start
     rollout_seconds = integrate_jax_block_rollout(
         jax_sim,
-        jax_block,
+        (jax_block,),
         steps=steps,
         warmup_runs=warmup_runs,
     )
@@ -489,28 +461,22 @@ def run_jax_rollout_gpu2x(
     steps: int,
     warmup_runs: int,
 ) -> BenchmarkTiming:
-    """Run two single-GPU block rollouts in parallel, one per CUDA device."""
+    """Build two explicitly assigned GPU blocks and time one JAX rollout."""
+    instantiate_start = time.perf_counter()
+    dtype = np.dtype(np.float64)
     devices = eaj.resolve_backend_devices("cuda")
-    split = n_snakes // 2
-    remainder = n_snakes - split
-    jobs = (
-        (devices[0], split),
-        (devices[1], remainder),
+    jax_sim, jax_blocks = build_jax_sim_gpu2x(
+        devices=devices,
+        device_dtype=dtype,
+        n_snakes=n_snakes,
+    )
+    _block_until_ready(jax_blocks)
+    instantiate_seconds = time.perf_counter() - instantiate_start
+    rollout_seconds = integrate_jax_block_rollout(
+        jax_sim,
+        jax_blocks,
+        steps=steps,
+        warmup_runs=warmup_runs,
     )
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [
-            executor.submit(
-                run_jax_rollout,
-                device=device,
-                n_snakes=count,
-                steps=steps,
-                warmup_runs=warmup_runs,
-            )
-            for device, count in jobs
-        ]
-        timings = [future.result() for future in futures]
-
-    instantiate_seconds = max(timing[0] for timing in timings)
-    rollout_seconds = max(timing[1] for timing in timings)
     return instantiate_seconds, rollout_seconds

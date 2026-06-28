@@ -1,8 +1,29 @@
 from __future__ import annotations
-from typing import Any, Protocol
 
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any, Callable, Protocol
 
 JAXPyTree = Any
+JAXScalar = Any
+JAXStageTransform = Callable[[JAXPyTree, JAXScalar], JAXPyTree]
+
+
+@dataclass(frozen=True)
+class JAXBlockStages:
+    """Pure stage transforms for one independently executable block."""
+
+    constrain_values: tuple[JAXStageTransform, ...] = ()
+    synchronize: tuple[JAXStageTransform, ...] = ()
+    constrain_rates: tuple[JAXStageTransform, ...] = ()
+
+
+@dataclass(frozen=True)
+class JAXBlockExecution:
+    """Local stage transforms for a block and its optional device shards."""
+
+    stages: JAXBlockStages
+    shard_stages: tuple[JAXBlockStages, ...] | None = None
 
 
 class JAXBlock(Protocol):
@@ -23,27 +44,27 @@ class JAXBlock(Protocol):
     def jax_kinematic_step(
         self,
         state: JAXPyTree,
-        time: np.float64,
-        prefac: np.float64,
+        time: JAXScalar,
+        prefac: JAXScalar,
     ) -> JAXPyTree: ...
 
     def jax_dynamic_step(
         self,
         state: JAXPyTree,
-        time: np.float64,
-        dt: np.float64,
+        time: JAXScalar,
+        dt: JAXScalar,
     ) -> JAXPyTree: ...
 
     def jax_compute_internal_forces_and_torques(
         self,
         state: JAXPyTree,
-        time: np.float64,
+        time: JAXScalar,
     ) -> JAXPyTree: ...
 
     def jax_zero_external_loads(
         self,
         state: JAXPyTree,
-        time: np.float64,
+        time: JAXScalar,
     ) -> JAXPyTree: ...
 
 
@@ -62,17 +83,17 @@ class JAXSystems(Protocol):
     def jax_constrain_values(
         self,
         states: tuple[JAXPyTree, ...],
-        time: np.float64,
+        time: JAXScalar,
     ) -> tuple[JAXPyTree, ...]: ...
 
     def jax_synchronize(
         self,
         states: tuple[JAXPyTree, ...],
-        time: np.float64,
+        time: JAXScalar,
     ) -> tuple[JAXPyTree, ...]: ...
 
     def jax_constrain_rates(
         self,
         states: tuple[JAXPyTree, ...],
-        time: np.float64,
+        time: JAXScalar,
     ) -> tuple[JAXPyTree, ...]: ...

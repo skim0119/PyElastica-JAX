@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Type
+from typing import Sequence, Type
 
 import jax
 import numpy as np
 
-from elastica_jax.execution_mesh import ExecutionMesh
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import _ShardedCosseratRodBlock
 
@@ -24,12 +23,6 @@ def resolve_backend_devices(backend: str) -> tuple[jax.Device, ...]:
         raise RuntimeError(f"Requested backend {backend!r} is unavailable.") from exc
     assert devices, f"Requested backend {backend!r} returned no devices."
     return devices
-
-
-def _resolve_device(device: str | jax.Device) -> jax.Device:
-    if isinstance(device, str):
-        return resolve_backend_devices(device)[0]
-    return device
 
 
 def _normalize_device_dtype(device_dtype: str | np.dtype) -> np.dtype:
@@ -58,15 +51,17 @@ def configure_rod_block(
     PyElastica builds the block by calling the returned instance as
     ``block(systems, system_idx_list)`` during ``finalize()``.
     """
+    if isinstance(device, str):
+        device = resolve_backend_devices(device)[0]
     return inner_block_cls(
-        device=_resolve_device(device),
+        device=device,
         device_dtype=_normalize_device_dtype(device_dtype),
     )
 
 
 def configure_rod_block_sharded(
     *,
-    mesh: ExecutionMesh,
+    devices: Sequence[jax.Device] | None = None,
     device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
     inner_block_cls: Type[_CosseratRodMemoryBlock] = _CosseratRodMemoryBlock,
     block_checkpoint: Path | str | None = None,
@@ -74,11 +69,18 @@ def configure_rod_block_sharded(
     """
     Return a configured sharded Cosserat rod block for ``enable_block_supports``.
 
+    Rods are split evenly across ``devices`` when the block is finalized.
+
     PyElastica builds the block by calling the returned instance as
     ``block(systems, system_idx_list)`` during ``finalize()``.
     """
+    device_tuple = tuple(devices if devices is not None else jax.devices())
+    assert len(device_tuple) >= 2, (
+        "Sharded rod blocks require at least two devices. "
+        "Use configure_rod_block(...) for a single-device memory block."
+    )
     return _ShardedCosseratRodBlock(
-        mesh=mesh,
+        devices=device_tuple,
         device_dtype=_normalize_device_dtype(device_dtype),
         block_checkpoint=block_checkpoint,
         inner_block_cls=inner_block_cls,

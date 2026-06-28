@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Type
+from typing import Any, Iterable, Sequence, Type
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from elastica_jax.execution_mesh import ExecutionMesh
+from elastica.typing import RodType, SystemIdxType
 from elastica_jax.memory_block.memory_block_rod_jax import (
+    RodSyncTarget,
     _CosseratRodMemoryBlock,
     _ELEMENT_ATTRS,
     _NODE_ATTRS,
     _SYNCABLE_ATTRS,
     _VORONOI_ATTRS,
 )
-from elastica.typing import RodType, SystemIdxType
 
 SHARDED_STATE_KEY = "_eaj_sharded_state"
 CONTACT_STATE_KEY_PREFIX = "capsule_contact_"
@@ -54,13 +54,7 @@ def _slice_merged_array_for_shard(
         return value[:, offset : offset + count]
     if current.ndim == 3:
         return value[:, :, offset : offset + count]
-    raise ValueError(
-        f"Unsupported rank {current.ndim} for sharded state key {key!r}."
-    )
-
-
-def is_sharded_block_state(state: dict[str, Any]) -> bool:
-    return bool(state.get(SHARDED_STATE_KEY, False))
+    raise ValueError(f"Unsupported rank {current.ndim} for sharded state key {key!r}.")
 
 
 class _ShardedCosseratRodBlock:
@@ -74,23 +68,45 @@ class _ShardedCosseratRodBlock:
     def __init__(
         self,
         *,
-        mesh: ExecutionMesh,
+        devices: Sequence[jax.Device],
         device_dtype: np.dtype,
         block_checkpoint: Path | str | None = None,
         inner_block_cls: Type[_CosseratRodMemoryBlock] = _CosseratRodMemoryBlock,
     ) -> None:
-        self.mesh = mesh
+        self._devices = tuple(devices)
+        self._rod_to_shard = np.zeros(0, dtype=np.int32)
         self.device_dtype = device_dtype
         self.block_checkpoint_path = (
             Path(block_checkpoint) if block_checkpoint is not None else None
         )
         self.inner_block_cls = inner_block_cls
 
+    @property
+    def rod_to_shard(self) -> np.ndarray:
+        return self._rod_to_shard
+
+    @property
+    def n_shards(self) -> int:
+        return len(self._devices)
+
     def __call__(
         self,
         systems: list[RodType],
         system_idx_list: list[SystemIdxType],
     ) -> _ShardedCosseratRodBlock:
+        # Only allow to build sharded block when:
+        # Number of rods is greater than 2
+        # Number of rods is divisible by number of devices.
+        # TODO: Padding could resolve this issue. Not sure if the padding
+        # should be implemented within the block implementation, or leave
+        # it a user responsibility.
+        assert len(systems) >= len(self._devices), (
+            "Number of rods must be at least the number of devices."
+        )
+        assert len(systems) % len(self._devices) == 0, (
+            "Number of rods must be divisible by number of devices."
+        )
+
         from elastica_jax.checkpoint.block_checkpoint import (
             infer_n_elements_per_rod,
             save_block_checkpoint,
@@ -125,18 +141,7 @@ class _ShardedCosseratRodBlock:
         system_idx_list: list[SystemIdxType],
     ) -> None:
         n_rods = len(systems)
-        mesh = self.mesh
-        if mesh.rod_to_shard.size != n_rods:
-            if mesh.n_shards == 1 and mesh.rod_to_shard.size == 0:
-                mesh = ExecutionMesh(
-                    devices=mesh.devices,
-                    rod_to_shard=np.zeros(n_rods, dtype=np.int32),
-                )
-                self.mesh = mesh
-            else:
-                assert mesh.rod_to_shard.shape == (
-                    n_rods,
-                ), "ExecutionMesh.rod_to_shard must have one entry per rod."
+        self._resolve_shard_layout(n_rods)
         self._systems = tuple(systems)
         self.n_rods = n_rods
         self._shard_blocks: tuple[_CosseratRodMemoryBlock, ...] = tuple(
@@ -145,14 +150,33 @@ class _ShardedCosseratRodBlock:
                 systems=systems,
                 system_idx_list=system_idx_list,
             )
-            for shard_index in range(mesh.n_shards)
+            for shard_index in range(self.n_shards)
         )
-        if mesh.is_sharded:
-            self._primary_block = self._shard_blocks[0]
-            self._build_global_index_maps()
-        else:
-            self._primary_block = self._shard_blocks[0]
-            self._mirror_primary_layout()
+        self._primary_block = self._shard_blocks[0]
+        self._build_global_index_maps()
+
+    def _resolve_shard_layout(self, n_rods: int) -> None:
+        from elastica_jax.checkpoint.block_checkpoint import (
+            read_block_checkpoint_layout,
+        )
+
+        n_shards = len(self._devices)
+        checkpoint_path = self.block_checkpoint_path
+        if checkpoint_path is not None and checkpoint_path.is_file():
+            layout = read_block_checkpoint_layout(checkpoint_path)
+            assert layout.n_rods == n_rods, (
+                "Block checkpoint rod count does not match appended rods."
+            )
+            assert layout.n_shards == n_shards, (
+                "Block checkpoint shard count does not match configured devices."
+            )
+            if layout.rod_to_shard is not None:
+                self._rod_to_shard = np.asarray(layout.rod_to_shard, dtype=np.int32)
+            else:
+                self._rod_to_shard = np.arange(n_rods, dtype=np.int32) % n_shards
+            return
+
+        self._rod_to_shard = np.arange(n_rods, dtype=np.int32) % n_shards
 
     def _build_shard_block(
         self,
@@ -161,11 +185,11 @@ class _ShardedCosseratRodBlock:
         systems: list[RodType],
         system_idx_list: list[SystemIdxType],
     ) -> _CosseratRodMemoryBlock:
-        rod_indices = np.where(self.mesh.rod_to_shard == shard_index)[0]
+        rod_indices = np.where(self._rod_to_shard == shard_index)[0]
         shard_systems = [systems[int(index)] for index in rod_indices]
         shard_system_idx = [system_idx_list[int(index)] for index in rod_indices]
         shard_block = self.inner_block_cls(
-            device=self.mesh.devices[shard_index],
+            device=self._devices[shard_index],
             device_dtype=self.device_dtype,
         )
         shard_block(shard_systems, shard_system_idx)
@@ -210,28 +234,12 @@ class _ShardedCosseratRodBlock:
         )
         self.ring_rod_flag = any(block.ring_rod_flag for block in self._shard_blocks)
 
-    def _mirror_primary_layout(self) -> None:
-        block = self._primary_block
-        self.n_nodes = block.n_nodes
-        self.n_elems = block.n_elems
-        self.n_systems = block.n_systems
-        self.system_idx_list = block.system_idx_list
-        self.start_idx_in_rod_nodes = block.start_idx_in_rod_nodes
-        self.end_idx_in_rod_nodes = block.end_idx_in_rod_nodes
-        self.start_idx_in_rod_elems = block.start_idx_in_rod_elems
-        self.end_idx_in_rod_elems = block.end_idx_in_rod_elems
-        self.start_idx_in_rod_voronoi = block.start_idx_in_rod_voronoi
-        self.end_idx_in_rod_voronoi = block.end_idx_in_rod_voronoi
-        self.ring_rod_flag = block.ring_rod_flag
-
     def __getattr__(self, attr: str) -> np.ndarray:
         if attr not in _SYNCABLE_ATTRS:
             raise AttributeError(attr)
         return self._get_syncable_attr(attr)
 
     def _get_syncable_attr(self, attr: str) -> np.ndarray:
-        if not self.mesh.is_sharded:
-            return getattr(self._primary_block, attr)
         chunks = [getattr(block, attr) for block in self._shard_blocks]
         if chunks[0].ndim == 1:
             return np.concatenate(chunks, axis=0)
@@ -243,19 +251,13 @@ class _ShardedCosseratRodBlock:
             f"Unsupported rank {chunks[0].ndim} for syncable attribute {attr!r}."
         )
 
-    def _primary_device(self) -> jax.Device:
-        return self.mesh.devices[0]
-
     def _concatenate_device_arrays(
         self,
         arrays: list[jax.Array],
         *,
         axis: int,
     ) -> jax.Array:
-        primary_device = self._primary_device()
-        transferred = [
-            jax.device_put(array, device=primary_device) for array in arrays
-        ]
+        transferred = [jax.device_put(array, device=self._devices[0]) for array in arrays]
         return jnp.concatenate(transferred, axis=axis)
 
     def _concatenate_rod_index_array(self, attr: str) -> np.ndarray:
@@ -277,10 +279,83 @@ class _ShardedCosseratRodBlock:
             voronoi_offset += block.n_voronoi
         return np.concatenate(chunks)
 
+    def _normalize_rod_sync_target(self, rods: RodSyncTarget) -> tuple[RodType, ...]:
+        assert hasattr(self, "_systems"), (
+            "Block must be built before synchronizing with rods."
+        )
+        if rods == "all":
+            return self._systems
+        if isinstance(rods, (list, tuple)):
+            return tuple(rods)
+        return (rods,)
+
+    def _shard_blocks_for_rods(
+        self, rods: RodSyncTarget
+    ) -> tuple[tuple[_CosseratRodMemoryBlock, RodSyncTarget], ...]:
+        if rods == "all":
+            return tuple((block, "all") for block in self._shard_blocks)
+
+        rods_by_shard: dict[int, list[RodType]] = {}
+        for rod in self._normalize_rod_sync_target(rods):
+            global_index = self._systems.index(rod)
+            shard_index = int(self._rod_to_shard[global_index])
+            rods_by_shard.setdefault(shard_index, []).append(rod)
+
+        return tuple(
+            (
+                self._shard_blocks[shard_index],
+                shard_rods[0] if len(shard_rods) == 1 else tuple(shard_rods),
+            )
+            for shard_index, shard_rods in sorted(rods_by_shard.items())
+        )
+
+    def to_device(
+        self,
+        rods: RodSyncTarget = "all",
+        *,
+        variables: Iterable[str] | None = None,
+    ) -> None:
+        """
+        Copy selected fields from host block memory and rod objects to device.
+
+        Parameters
+        ----------
+        rods
+            One rod, a sequence of rods, or ``"all"`` for every rod in the block.
+        variables
+            Block fields to synchronize. Defaults to all syncable fields.
+        """
+        for shard_block, shard_rods in self._shard_blocks_for_rods(rods):
+            shard_block.to_device(shard_rods, variables=variables)
+
+    def from_device(
+        self,
+        rods: RodSyncTarget = "all",
+        *,
+        variables: Iterable[str] | None = None,
+        update_rods: bool = True,
+    ) -> None:
+        """
+        Copy selected fields from device to host block memory and rod objects.
+
+        Parameters
+        ----------
+        rods
+            One rod, a sequence of rods, or ``"all"`` for every rod in the block.
+        variables
+            Block fields to synchronize. Defaults to all syncable fields.
+        update_rods
+            When ``False``, update block host memory only.
+        """
+        for shard_block, shard_rods in self._shard_blocks_for_rods(rods):
+            shard_block.from_device(
+                shard_rods,
+                variables=variables,
+                update_rods=update_rods,
+            )
+
     @property
     def position_collection_device(self) -> jax.Array:
-        if not self.mesh.is_sharded:
-            return self._primary_block.position_collection_device
         shards = [block.position_collection_device for block in self._shard_blocks]
         return self._concatenate_device_arrays(shards, axis=1)
 
@@ -296,25 +371,18 @@ class _ShardedCosseratRodBlock:
         return tuple(updated)
 
     def jax_get_state(self) -> dict[str, Any]:
-        if not self.mesh.is_sharded:
-            return self._primary_block.jax_get_state()
         return {
             SHARDED_STATE_KEY: True,
             "shards": tuple(block.jax_get_state() for block in self._shard_blocks),
         }
 
     def jax_set_state(self, state: dict[str, Any]) -> None:
-        if not is_sharded_block_state(state):
-            self._primary_block.jax_set_state(state)
-            return
         for block, shard_state in zip(self._shard_blocks, state["shards"]):
             block.jax_set_state(shard_state)
 
     def jax_kinematic_step(
         self, state: dict[str, Any], time: np.float64, prefac: np.float64
     ) -> dict[str, Any]:
-        if not self.mesh.is_sharded:
-            return self._primary_block.jax_kinematic_step(state, time, prefac)
         return {
             SHARDED_STATE_KEY: True,
             "shards": self._map_shard_states(state, "jax_kinematic_step", time, prefac),
@@ -323,10 +391,6 @@ class _ShardedCosseratRodBlock:
     def jax_compute_internal_forces_and_torques(
         self, state: dict[str, Any], time: np.float64
     ) -> dict[str, Any]:
-        if not self.mesh.is_sharded:
-            return self._primary_block.jax_compute_internal_forces_and_torques(
-                state, time
-            )
         return {
             SHARDED_STATE_KEY: True,
             "shards": self._map_shard_states(
@@ -337,8 +401,6 @@ class _ShardedCosseratRodBlock:
     def jax_dynamic_step(
         self, state: dict[str, Any], time: np.float64, dt: np.float64
     ) -> dict[str, Any]:
-        if not self.mesh.is_sharded:
-            return self._primary_block.jax_dynamic_step(state, time, dt)
         return {
             SHARDED_STATE_KEY: True,
             "shards": self._map_shard_states(state, "jax_dynamic_step", time, dt),
@@ -347,8 +409,6 @@ class _ShardedCosseratRodBlock:
     def jax_zero_external_loads(
         self, state: dict[str, Any], time: np.float64
     ) -> dict[str, Any]:
-        if not self.mesh.is_sharded:
-            return self._primary_block.jax_zero_external_loads(state, time)
         return {
             SHARDED_STATE_KEY: True,
             "shards": self._map_shard_states(state, "jax_zero_external_loads", time),
@@ -356,9 +416,9 @@ class _ShardedCosseratRodBlock:
 
     def merge_shard_states(self, state: dict[str, Any]) -> dict[str, Any]:
         """Build a unified logical block state on the primary shard device."""
-        assert is_sharded_block_state(
-            state
-        ), "merge_shard_states requires a sharded state."
+        assert state.get(SHARDED_STATE_KEY, False), (
+            "merge_shard_states requires a sharded state."
+        )
         merged: dict[str, Any] = {}
         for key in state["shards"][0]:
             chunks = []
@@ -386,9 +446,9 @@ class _ShardedCosseratRodBlock:
         self, merged: dict[str, Any], state: dict[str, Any]
     ) -> dict[str, Any]:
         """Scatter unified keys from ``merged`` back into shard states."""
-        assert is_sharded_block_state(
-            state
-        ), "scatter_merged_state requires a sharded state."
+        assert state.get(SHARDED_STATE_KEY, False), (
+            "scatter_merged_state requires a sharded state."
+        )
         scattered_shards = []
         node_offset = 0
         elem_offset = 0

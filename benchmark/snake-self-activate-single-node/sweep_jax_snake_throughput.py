@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
+
 import csv
 from pathlib import Path
 
@@ -22,8 +26,6 @@ def _sweep_backend(
     *,
     steps: int,
     warmup_runs: int,
-    no_external_loads: bool,
-    transfer_guard: str,
     verbose: bool,
 ) -> list[SweepPoint]:
     """Run rollout timing for ``n_snakes = 2**exp`` across an exponent range."""
@@ -42,8 +44,6 @@ def _sweep_backend(
             n_snakes_exp=exponent,
             steps=steps,
             warmup_runs=warmup_runs,
-            no_external_loads=no_external_loads,
-            transfer_guard=transfer_guard,
         )
         print(
             f"{backend} n_snakes={n_snakes} (2^{exponent}): "
@@ -125,21 +125,11 @@ def _load_scaling_csv(csv_path: Path) -> tuple[dict[str, list[SweepPoint]], int]
 @click.option("--cpu-min-exp", type=int, default=1, show_default=True)
 @click.option("--cpu-max-exp", type=int, default=12, show_default=True)
 @click.option("--gpu2x-min-exp", type=int, default=1, show_default=True)
-@click.option("--gpu2x-max-exp", type=int, default=14, show_default=True)
+@click.option("--gpu2x-max-exp", type=int, default=8, show_default=True)
 @click.option("--gpu2x-sharded-min-exp", type=int, default=1, show_default=True)
-@click.option("--gpu2x-sharded-max-exp", type=int, default=14, show_default=True)
+@click.option("--gpu2x-sharded-max-exp", type=int, default=8, show_default=True)
 @click.option("--pyelastica-min-exp", type=int, default=1, show_default=True)
 @click.option("--pyelastica-max-exp", type=int, default=12, show_default=True)
-@click.option("--no-external-loads", is_flag=True)
-@click.option(
-    "--transfer-guard",
-    type=click.Choice(
-        ("allow", "log", "disallow", "log_explicit", "disallow_explicit"),
-        case_sensitive=False,
-    ),
-    default="allow",
-    show_default=True,
-)
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
@@ -161,7 +151,9 @@ def _load_scaling_csv(csv_path: Path) -> tuple[dict[str, list[SweepPoint]], int]
 )
 @click.option("--skip-cuda", is_flag=True, help="Skip the CUDA sweep.")
 @click.option("--skip-cpu", is_flag=True, help="Skip the JAX CPU sweep.")
-@click.option("--skip-gpu2x", is_flag=True, help="Skip the 2-GPU dual-block CUDA sweep.")
+@click.option(
+    "--skip-gpu2x", is_flag=True, help="Skip the 2-GPU dual-block CUDA sweep."
+)
 @click.option(
     "--skip-gpu2x-sharded",
     is_flag=True,
@@ -182,8 +174,6 @@ def main(
     gpu2x_sharded_max_exp: int,
     pyelastica_min_exp: int,
     pyelastica_max_exp: int,
-    no_external_loads: bool,
-    transfer_guard: str,
     output: Path,
     csv_output: Path | None,
     from_csv: Path | None,
@@ -203,17 +193,8 @@ def main(
 
     assert not (
         skip_cuda and skip_cpu and skip_gpu2x and skip_gpu2x_sharded and skip_pyelastica
-    ), (
-        "At least one backend sweep is required."
-    )
+    ), "At least one backend sweep is required."
 
-    sweep_kwargs = {
-        "steps": steps,
-        "warmup_runs": warmup_runs,
-        "no_external_loads": no_external_loads,
-        "transfer_guard": transfer_guard,
-        "verbose": not quiet,
-    }
     series: dict[str, list[SweepPoint]] = {}
 
     if not skip_cuda:
@@ -221,35 +202,45 @@ def main(
             "cuda",
             cuda_min_exp,
             cuda_max_exp,
-            **sweep_kwargs,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            verbose=not quiet,
         )
     if not skip_cpu:
         series["jax-cpu"] = _sweep_backend(
             "cpu",
             cpu_min_exp,
             cpu_max_exp,
-            **sweep_kwargs,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            verbose=not quiet,
         )
     if not skip_gpu2x:
         series["gpu2x"] = _sweep_backend(
             "gpu2x",
             gpu2x_min_exp,
             gpu2x_max_exp,
-            **sweep_kwargs,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            verbose=not quiet,
         )
     if not skip_gpu2x_sharded:
         series["gpu2x_sharded"] = _sweep_backend(
             "gpu2x_sharded",
             gpu2x_sharded_min_exp,
             gpu2x_sharded_max_exp,
-            **sweep_kwargs,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            verbose=not quiet,
         )
     if not skip_pyelastica:
         series["pyelastica"] = _sweep_backend(
             "pyelastica",
             pyelastica_min_exp,
             pyelastica_max_exp,
-            **sweep_kwargs,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            verbose=not quiet,
         )
 
     csv_path = csv_output if csv_output is not None else output.with_suffix(".csv")
