@@ -12,6 +12,11 @@ During ``finalize()``, PyElastica builds one inner block per device. Block
 state is then stored as a dictionary with a ``"shards"`` entry instead of
 one flat device buffer.
 
+``PositionVerletJAX`` compiles one ``jax.lax.fori_loop`` for each inner shard
+and launches those shard-local rollouts through the single logical block. This
+keeps the front API identical to a non-sharded block while avoiding transfers
+between unrelated device-local buffers.
+
 This script emulates multiple CPU devices with ``XLA_FLAGS`` so it runs
 without CUDA hardware. On a multi-GPU machine, build the mesh from
 ``eaj.resolve_backend_devices("cuda")`` instead of ``jax.devices("cpu")``.
@@ -29,11 +34,11 @@ import time
 N_DEVICES = 2
 os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={N_DEVICES}"
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-import elastica as ea
-import elastica_jax as eaj
-import jax
+import elastica as ea  # noqa: E402
+import elastica_jax as eaj  # noqa: E402
+import jax  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 
@@ -44,7 +49,7 @@ class CantileverSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 
 def main(
     n_rods: int = N_DEVICES,
-    final_time: float = 0.1,
+    final_time: float = 100.0,
     time_step: float = 1.0e-4,
     show: bool = False,
 ) -> None:

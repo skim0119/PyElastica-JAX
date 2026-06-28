@@ -1,24 +1,25 @@
-"""Tutorial: shard rod memory across multiple JAX devices.
+"""Tutorial: assign rods to separate JAX devices with distinct memory blocks.
 
-A single ``configure_rod_block`` keeps every rod on one device. A **sharded
-memory block** splits rods evenly across the requested JAX devices:
+A single ``configure_rod_block`` keeps every rod on one device. To place rods on
+different devices explicitly, create one configured block per device and register
+each with ``enable_block_supports`` using distinct rod types:
 
-    rod_block = eaj.configure_rod_block_sharded(
-        devices=jax.devices(),
-        device_dtype=np.float64,
-    )
+    rod_block_1 = eaj.configure_rod_block(device=jax.devices()[0], ...)
+    rod_block_2 = eaj.configure_rod_block(device=jax.devices()[1], ...)
+    simulator.enable_block_supports(cr_type_1, rod_block_1)
+    simulator.enable_block_supports(cr_type_2, rod_block_2)
 
-During ``finalize()``, PyElastica builds one inner block per device. Block
-state is then stored as a dictionary with a ``"shards"`` entry instead of
-one flat device buffer.
+The blocks are independent execution units. ``PositionVerletJAX`` compiles one
+``jax.lax.fori_loop`` rollout per block and launches each rollout on the device
+that owns that block. Operators that couple different blocks cannot use this
+path and are rejected instead of falling back to a Python timestep loop.
 
 This script emulates multiple CPU devices with ``XLA_FLAGS`` so it runs
-without CUDA hardware. On a multi-GPU machine, build the mesh from
+without CUDA hardware. On a multi-GPU machine, use
 ``eaj.resolve_backend_devices("cuda")`` instead of ``jax.devices("cpu")``.
 
-For a timed multi-GPU rollout, see
-``benchmark/snake-self-activate-single-node/`` and the ``gpu2x`` /
-``gpu2x_sharded`` backends.
+For rods split across devices inside one logical block, see
+``02-block-multi-device-sharded.py`` and the ``gpu2x_sharded`` benchmark backend.
 """
 
 from __future__ import annotations
@@ -29,11 +30,11 @@ import time
 N_DEVICES = 2
 os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={N_DEVICES}"
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-import elastica as ea
-import elastica_jax as eaj
-import jax
+import elastica as ea  # noqa: E402
+import elastica_jax as eaj  # noqa: E402
+import jax  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 
@@ -44,7 +45,7 @@ class CantileverSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 
 def main(
     n_rods: int = N_DEVICES,
-    final_time: float = 0.1,
+    final_time: float = 100.0,
     time_step: float = 1.0e-4,
     show: bool = False,
 ) -> None:
@@ -149,7 +150,7 @@ def main(
         plt.xlabel("z")
         plt.ylabel("x or y")
         plt.gca().set_aspect("equal", adjustable="box")
-        plt.title("Rod (all shards identical)")
+        plt.title("Cantilevers on separate devices")
         plt.legend()
         plt.show()
 
