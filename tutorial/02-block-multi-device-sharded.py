@@ -49,45 +49,18 @@ def main(
     show: bool = False,
 ) -> None:
     simulator = CantileverSimulator()
-    rod_block_1 = eaj.configure_rod_block(
-        device=jax.devices()[0],
+    rod_block = eaj.configure_rod_block_sharded(
+        devices=jax.devices(),
         device_dtype=np.float64,
     )
-    rod_block_2 = eaj.configure_rod_block(
-        device=jax.devices()[1],
-        device_dtype=np.float64,
-    )
-
-    # FIXME: This is hack to create same Cosserat rod but make it register differently.
-    # Might be useful to have easier way to separate same rods on different block.
-    skip_attrs = {
-        "__dict__",
-        "__weakref__",
-        "__module__",
-        "__annotations__",
-        "__doc__",
-        "__qualname__",
-    }
-    cr_type_1 = type(
-        "CR_ON_DEVICE_1",
-        ea.CosseratRod.__bases__,
-        {k: v for k, v in ea.CosseratRod.__dict__.items() if k not in skip_attrs},
-    )
-    cr_type_2 = type(
-        "CR_ON_DEVICE_2",
-        ea.CosseratRod.__bases__,
-        {k: v for k, v in ea.CosseratRod.__dict__.items() if k not in skip_attrs},
-    )
-    simulator.enable_block_supports(cr_type_1, rod_block_1)
-    simulator.enable_block_supports(cr_type_2, rod_block_2)
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
     initial_positions: list[np.ndarray] = []
     rods = []
     for rod_index in range(n_rods):
         # Just to give offset in the visualization:
-        rod_type = cr_type_1 if rod_index % 2 == 0 else cr_type_2
         start = np.array([0.1 * rod_index, 0.1 * rod_index, 0.0], dtype=np.float64)
-        rod = rod_type.straight_rod(
+        rod = ea.CosseratRod.straight_rod(
             n_elements=20,
             start=start,
             direction=np.array([0.0, 0.0, 1.0]),
@@ -101,14 +74,8 @@ def main(
         rods.append(rod)
         simulator.append(rod)
 
-    simulator.operate_block(rod_block_1).using(eaj.OneEndFixedJax)
-    simulator.operate_block(rod_block_2).using(eaj.OneEndFixedJax)
-    simulator.operate_block(rod_block_1).using(
-        eaj.GravityAnalyticalDamperJax,
-        time_step=time_step,
-        uniform_damping_constant=0.5,
-    )
-    simulator.operate_block(rod_block_2).using(
+    simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
+    simulator.operate_block(rod_block).using(
         eaj.GravityAnalyticalDamperJax,
         time_step=time_step,
         uniform_damping_constant=0.5,
@@ -123,13 +90,11 @@ def main(
         final_time=final_time,
         dt=time_step,
     )
-    jax.block_until_ready(rod_block_1)
-    jax.block_until_ready(rod_block_2)
+    jax.block_until_ready(rod_block)
     integrate_walltime = time.perf_counter() - integrate_start
 
     # Fetch all rods data
-    rod_block_1.from_device()
-    rod_block_2.from_device()
+    rod_block.from_device()
     final_positions = [rod.position_collection for rod in rods]
 
     print("\nIntegrated cantilever tips (z displacement):")
