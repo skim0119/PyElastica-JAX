@@ -266,6 +266,8 @@ To define the operator, derive from `eaj.NoBlockOpJax` and override block-stage 
 `jax_block_operate_*` functions receive the entire block state, and return the updated state.
 `jax_per_rod_operate_*` functions receive the single rod view and return the updated state.
 
+> **Reusing single-rod operators on blocks:** Classes derived from ``eaj.NoOpsJax`` (the same ``jax_operate_*`` API used with ``operate(rod)``) can also be registered with ``operate_block(rod_block).using(...)``. This is intentional: one operator instance is created per rod in the block (so ``__init__`` can read that rod's ``_system``), and the existing rod-local kernels are batched through the same per-rod gather/scatter path as ``jax_per_rod_operate_*``. For example, ``eaj.OneEndFixedJax`` works with both ``operate(rod)`` and ``operate_block(rod_block)`` without duplicating the implementation under ``jax_per_rod_operate_*``.
+
 Block-wide gravity on all rods and one-end-fixed on each rods:
 
 ```py
@@ -307,6 +309,31 @@ simulator.operate_block(rod_block).using(
     tip_director=jnp.eye(3),
 )
 ```
+
+### Rod-Rod Interaction
+
+> Work-in-progress.
+
+The interaction API is currently under design and construction.
+The goal is to support the following syntax:
+
+```py
+class Simulator(ea.BaseSystemCollection, eaj.JAXInteraction):
+
+class Repell(eaj.NoRodRodBlockOpJax):
+    def jax_operation(self, rod_one_view, rod_two_view, time):
+        ... # Operation
+        return rod_one_view, rod_two_view
+
+
+simulator.pairwise_interaction(rod_one, rod_two).using(
+    Repell,
+    ... # Arguments for Repell
+)
+```
+
+It is slightly getting convoluted to account for cross-device interaction within the JIT compiled loop.
+For now, it is working when rod pair is on the same device.
 
 ## Advanced Usage
 

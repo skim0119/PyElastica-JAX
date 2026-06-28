@@ -25,6 +25,11 @@ from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
 from .jax_ops import JAXBasicMixins
 
 
+# Stage hooks registered during finalize(). Each row is:
+# (stage, block-wide method, block-native per-rod method, single-rod method).
+# The single-rod column reuses ``NoOpsJax`` / ``jax_operate_*`` kernels from
+# ``operate()`` by instantiating one operator per rod and batching through the
+# same gather/scatter path as ``jax_per_rod_operate_*``.
 _BLOCK_STAGE_METHODS = (
     (
         "constrain_values",
@@ -101,14 +106,17 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     where `MyOp` derives from `eaj.NoBlockOpJax`. Pass the same block
     instance registered with ``enable_block_supports``.
 
-    `JAXOpsBlock` supports two execution styles:
+    `JAXOpsBlock` supports three execution styles:
 
-    - block-native operators implementing `jax_block_operate_*`
-    - per-rod operators implementing `jax_per_rod_operate_*`
+    - block-native operators implementing ``jax_block_operate_*``
+    - block per-rod operators implementing ``jax_per_rod_operate_*``
+    - single-rod operators (``NoOpsJax`` / ``jax_operate_*``) reused on blocks
+      via ``operate_block``; one operator instance is created per rod so
+      constructors can capture rod-local state from ``_system``
 
-    Per-rod operators are batched across rods during `finalize()` by gathering
-    uniform rod slices from the block state, applying `jax.vmap(...)`, and
-    scattering the updated rod-local fields back once per stage.
+    Block per-rod and single-rod paths share the same gather/scatter batching
+    during ``finalize()``. Block-native operators run directly on the packed
+    block state.
     """
 
     _jax_block_ops_list: list[_JAXBlockOp]
@@ -351,12 +359,12 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             )
             staged_wrappers = []
             instantiate_with_block = False
-            instantiate_with_representative_rod = False
+            instantiate_per_rod_single_ops = False
             for (
                 stage,
                 block_method_name,
                 per_rod_method_name,
-                legacy_method_name,
+                single_rod_method_name,
             ) in _BLOCK_STAGE_METHODS:
                 op_cls = jax_op.operator_cls()
                 has_block = hasattr(op_cls, block_method_name) and getattr(
@@ -365,11 +373,11 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 has_per_rod = hasattr(op_cls, per_rod_method_name) and getattr(
                     op_cls, per_rod_method_name
                 ) is not getattr(NoBlockOpJax, per_rod_method_name)
-                has_legacy = hasattr(op_cls, legacy_method_name) and getattr(
-                    op_cls, legacy_method_name
-                ) is not getattr(NoOpsJax, legacy_method_name)
+                has_single_rod = hasattr(op_cls, single_rod_method_name) and getattr(
+                    op_cls, single_rod_method_name
+                ) is not getattr(NoOpsJax, single_rod_method_name)
 
-                assert not (has_block and (has_per_rod or has_legacy)), (
+                assert not (has_block and (has_per_rod or has_single_rod)), (
                     f"{op_cls} mixes block and per-rod JAX block operator "
                     f"implementations for stage {stage!r}. Choose one style per stage."
                 )
@@ -382,14 +390,14 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                     instantiate_with_block = True
                     continue
 
-                if has_legacy:
-                    instantiate_with_representative_rod = True
+                if has_single_rod:
+                    instantiate_per_rod_single_ops = True
                     continue
 
             assert not (
-                instantiate_with_block and instantiate_with_representative_rod
+                instantiate_with_block and instantiate_per_rod_single_ops
             ), (
-                f"{jax_op.operator_cls()} mixes block-style and legacy rod-style JAX "
+                f"{jax_op.operator_cls()} mixes block-style and single-rod JAX "
                 "block operator methods. Use one constructor contract."
             )
 
@@ -397,7 +405,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             shard_op_instances: tuple[Any, ...] = ()
             shard_per_rod_operators: tuple[tuple[Any, ...], ...] = ()
             per_rod_operators: tuple[Any, ...] | None = None
-            if instantiate_with_representative_rod:
+            if instantiate_per_rod_single_ops:
                 if isinstance(block_system, _ShardedCosseratRodBlock):
                     shard_per_rod_operators = tuple(
                         tuple(jax_op.instantiate(rod) for rod in shard._systems)
@@ -440,7 +448,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 stage,
                 block_method_name,
                 per_rod_method_name,
-                legacy_method_name,
+                single_rod_method_name,
             ) in _BLOCK_STAGE_METHODS:
                 has_block = hasattr(type(op_instance), block_method_name) and getattr(
                     type(op_instance), block_method_name
@@ -450,9 +458,11 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 ) and getattr(type(op_instance), per_rod_method_name) is not getattr(
                     NoBlockOpJax, per_rod_method_name
                 )
-                has_legacy = hasattr(type(op_instance), legacy_method_name) and getattr(
-                    type(op_instance), legacy_method_name
-                ) is not getattr(NoOpsJax, legacy_method_name)
+                has_single_rod = hasattr(
+                    type(op_instance), single_rod_method_name
+                ) and getattr(type(op_instance), single_rod_method_name) is not getattr(
+                    NoOpsJax, single_rod_method_name
+                )
 
                 if has_block:
                     operator = getattr(op_instance, block_method_name)
@@ -477,12 +487,12 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                         )
                     continue
 
-                if has_per_rod or has_legacy:
+                if has_per_rod or has_single_rod:
                     method_name = (
-                        per_rod_method_name if has_per_rod else legacy_method_name
+                        per_rod_method_name if has_per_rod else single_rod_method_name
                     )
                     operators: Any | tuple[Any, ...]
-                    if has_legacy and per_rod_operators is not None:
+                    if has_single_rod and per_rod_operators is not None:
                         operators = tuple(
                             getattr(op, method_name) for op in per_rod_operators
                         )
@@ -502,7 +512,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                                 strict=True,
                             )
                         ):
-                            if has_legacy:
+                            if has_single_rod:
                                 shard_operators = tuple(
                                     getattr(operator, method_name)
                                     for operator in shard_per_rod_operators[shard_index]
@@ -527,8 +537,8 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
             assert staged_wrappers, (
                 f"{type(op_instance)} does not define any JAX block stage methods. "
-                "Implement at least one of the block-stage methods or per-rod "
-                "stage methods."
+                "Implement at least one block-stage method, "
+                "`jax_per_rod_operate_*`, or single-rod `jax_operate_*`."
             )
 
             for stage, wrapped in staged_wrappers:
@@ -673,7 +683,7 @@ class _JAXBlockOp:
     ) -> None:
         assert issubclass(cls, (NoBlockOpJax, NoOpsJax)), (
             f"{cls} is not a valid JAX block operator. It must derive from "
-            "NoBlockOpJax or NoOpsJax."
+            "NoBlockOpJax or NoOpsJax (single-rod ops reused on blocks)."
         )
         self._op_cls = cls
         self._args = args

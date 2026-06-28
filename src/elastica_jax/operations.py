@@ -19,6 +19,11 @@ class NoOpsJax:
     """
     Empty template for pure-JAX rod-local operators.
 
+    Register with ``operate(rod)`` or reuse on packed blocks via
+    ``operate_block(block)``. The block path instantiates one operator per rod
+    and batches the same ``jax_operate_*`` hooks through the per-rod
+    gather/scatter machinery.
+
     Implement any subset of:
     - `jax_operate_constrain_values(rod_view, time)`
     - `jax_operate_synchronize(rod_view, time)`
