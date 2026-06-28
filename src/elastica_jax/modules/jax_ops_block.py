@@ -22,6 +22,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
+from .jax_ops import JAXBasicMixins
+
 
 _BLOCK_STAGE_METHODS = (
     (
@@ -69,17 +71,20 @@ class _PerRodStateView:
         return updated
 
 
-class JAXOpsBlock(SystemCollectionProtocol):
+class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     """
     Register pure JAX block operations and expose JAX stage transforms.
 
     User code normally interacts with this mixin through:
 
     ```python
-    simulator.operate_block(ea.CosseratRod).using(MyOp, ...)
+    rod_block = eaj.configure_rod_block()
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
+    simulator.operate_block(rod_block).using(MyOp, ...)
     ```
 
-    where `MyOp` derives from `ea.NoBlockOpJax`.
+    where `MyOp` derives from `eaj.NoBlockOpJax`. Pass the same block
+    instance registered with ``enable_block_supports``.
 
     `JAXOpsBlock` supports two execution styles:
 
@@ -98,28 +103,10 @@ class JAXOpsBlock(SystemCollectionProtocol):
         super().__init__()
         self._feature_group_finalize.append(self._finalize_jax_block_ops)
 
-    def operate_block(self, system_type) -> ModuleProtocol:  # type: ignore[no-untyped-def]
-        jax_op: ModuleProtocol = _JAXBlockOp(system_type)
+    def operate_block(self, target: JAXBlockOpTarget) -> ModuleProtocol:
+        jax_op: ModuleProtocol = _JAXBlockOp(target)
         self._jax_block_ops_list.append(jax_op)
         return jax_op
-
-    def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_synchronize:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_values(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_constrain_values:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_rates(self, states, time):  # type: ignore[no-untyped-def]
-        for func in chain(
-            self._feature_group_constrain_rates,
-            self._feature_group_damping,
-        ):
-            states = func(states=states, time=time)
-        return states
 
     @classmethod
     def _wrap_jax_block_operator(

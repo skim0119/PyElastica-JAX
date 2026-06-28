@@ -19,6 +19,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
 from elastica.typing import SystemIdxType
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
+from .jax_ops import JAXBasicMixins
 
 _STAGE_METHODS = (
     ("constrain_values", "jax_operate_constrain_values"),
@@ -27,7 +28,7 @@ _STAGE_METHODS = (
 )
 
 
-class JAXOpsRodRigidBody(SystemCollectionProtocol):
+class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
     """
     Register pure-JAX mixed rod/rigid-body operators and expose JAX stage transforms.
     """
@@ -49,24 +50,6 @@ class JAXOpsRodRigidBody(SystemCollectionProtocol):
         jax_op: ModuleProtocol = _JAXRodRigidBodyOp(rod_sys_idx, rigid_body_sys_idx)
         self._jax_rod_rigid_body_ops_list.append(jax_op)
         return jax_op
-
-    def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_synchronize:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_values(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_constrain_values:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_rates(self, states, time):  # type: ignore[no-untyped-def]
-        for func in chain(
-            self._feature_group_constrain_rates,
-            self._feature_group_damping,
-        ):
-            states = func(states=states, time=time)
-        return states
 
     @classmethod
     def _wrap_jax_rod_rigid_body_operator(

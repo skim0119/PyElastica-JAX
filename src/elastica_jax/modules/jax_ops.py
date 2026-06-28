@@ -22,7 +22,27 @@ _STAGE_METHODS = (
 )
 
 
-class JAXOps(SystemCollectionProtocol):
+class JAXBasicMixins:
+    def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
+        for func in self._feature_group_synchronize:
+            states = func(states=states, time=time)
+        return states
+
+    def jax_constrain_values(self, states, time):  # type: ignore[no-untyped-def]
+        for func in self._feature_group_constrain_values:
+            states = func(states=states, time=time)
+        return states
+
+    def jax_constrain_rates(self, states, time):  # type: ignore[no-untyped-def]
+        for func in chain(
+            self._feature_group_constrain_rates,
+            self._feature_group_damping,
+        ):
+            states = func(states=states, time=time)
+        return states
+
+
+class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
     """
     Register pure JAX rod-local operators and expose JAX stage transforms.
     """
@@ -61,24 +81,6 @@ class JAXOps(SystemCollectionProtocol):
             return tuple(updated_states)
 
         return apply
-
-    def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_synchronize:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_values(self, states, time):  # type: ignore[no-untyped-def]
-        for func in self._feature_group_constrain_values:
-            states = func(states=states, time=time)
-        return states
-
-    def jax_constrain_rates(self, states, time):  # type: ignore[no-untyped-def]
-        for func in chain(
-            self._feature_group_constrain_rates,
-            self._feature_group_damping,
-        ):
-            states = func(states=states, time=time)
-        return states
 
     def _finalize_jax_ops(self) -> None:
         final_systems = tuple(self.final_systems())
