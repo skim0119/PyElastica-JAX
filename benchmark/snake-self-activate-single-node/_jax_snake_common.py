@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypeAlias
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -28,7 +29,7 @@ from snake_operation import (  # noqa: E402
     SnakeMuscleTorquesBlockJax,
 )
 
-type BenchmarkTiming = tuple[float, float]
+BenchmarkTiming: TypeAlias = tuple[float, float]
 
 jax.config.update("jax_enable_x64", True)
 
@@ -76,7 +77,7 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 
-type JAXRodBlock = eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock
+JAXRodBlock: TypeAlias = eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock
 
 
 def two_gpu_sharded_devices() -> tuple[jax.Device, ...]:

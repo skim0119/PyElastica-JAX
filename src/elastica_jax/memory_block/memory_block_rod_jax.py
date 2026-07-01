@@ -84,7 +84,7 @@ _VORONOI_ATTRS: tuple[str, ...] = (
 )
 _SYNCABLE_ATTRS: tuple[str, ...] = _NODE_ATTRS + _ELEMENT_ATTRS + _VORONOI_ATTRS
 
-type RodSyncTarget = RodType | Sequence[RodType] | Literal["all"]
+RodSyncTarget = RodType | Sequence[RodType] | Literal["all"]
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@ os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
 
 import csv
 from pathlib import Path
+from typing import TypeAlias
 
 import click
 import matplotlib.pyplot as plt
@@ -16,7 +17,7 @@ from tqdm import tqdm
 
 from jax_snake_throughput import run
 
-type SweepPoint = tuple[int, int, float]
+SweepPoint: TypeAlias = tuple[int, int, float]
 
 
 def _sweep_backend(
