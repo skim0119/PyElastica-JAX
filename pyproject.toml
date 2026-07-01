@@ -32,6 +32,9 @@ dependencies = [
     "h5py",
 ]
 
+[tool.uv]
+no-binary-pacage = ["h5py"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
