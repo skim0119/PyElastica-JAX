@@ -176,9 +176,9 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         end_idx: np.ndarray,
     ) -> np.ndarray:
         widths = end_idx - start_idx
-        assert np.all(widths == widths[0]), (
-            "Per-rod JAX block operators require uniform discretization across rods."
-        )
+        assert np.all(
+            widths == widths[0]
+        ), "Per-rod JAX block operators require uniform discretization across rods."
         offsets = np.arange(int(widths[0]), dtype=np.int32)
         return start_idx[:, None].astype(np.int32) + offsets[None, :]
 
@@ -397,9 +397,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                     instantiate_per_rod_single_ops = True
                     continue
 
-            assert not (
-                instantiate_with_block and instantiate_per_rod_single_ops
-            ), (
+            assert not (instantiate_with_block and instantiate_per_rod_single_ops), (
                 f"{jax_op.operator_cls()} mixes block-style and single-rod JAX "
                 "block operator methods. Use one constructor contract."
             )
@@ -639,7 +637,9 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     def _find_target_block(
         final_systems: tuple[Any, ...],
         target: JAXBlockOpTarget | Type[Any],
-    ) -> tuple[int, _CosseratRodMemoryBlock | _ShardedCosseratRodBlock | _MpiCosseratRodBlock]:
+    ) -> tuple[
+        int, _CosseratRodMemoryBlock | _ShardedCosseratRodBlock | _MpiCosseratRodBlock
+    ]:
         if not isinstance(target, type):
             for block_state_idx, system in enumerate(final_systems):
                 if system is target:
@@ -654,7 +654,11 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         for block_state_idx, system in enumerate(final_systems):
             if not isinstance(
                 system,
-                (_CosseratRodMemoryBlock, _ShardedCosseratRodBlock, _MpiCosseratRodBlock),
+                (
+                    _CosseratRodMemoryBlock,
+                    _ShardedCosseratRodBlock,
+                    _MpiCosseratRodBlock,
+                ),
             ):
                 continue
             if isinstance(system, target_type):

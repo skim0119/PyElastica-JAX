@@ -33,8 +33,24 @@ def _parse_rollout_walltimes(output: str) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
-def _global_snake_count(*, snakes_per_rank_exp: int, mpi_size: int) -> int:
-    return (2**snakes_per_rank_exp) * mpi_size
+def _snakes_per_rank(
+    *,
+    snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
+) -> int:
+    return snakes_per_rank_multiplier * (2**snakes_per_rank_exp)
+
+
+def _global_snake_count(
+    *,
+    snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
+    mpi_size: int,
+) -> int:
+    return _snakes_per_rank(
+        snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+    ) * mpi_size
 
 
 def _mpi_worker_env(*, mpi_size: int) -> dict[str, str]:
@@ -60,8 +76,10 @@ def _build_mpiexec_command(
     mpi_size: int,
     python_executable: str,
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     warmup_runs: int,
+    backend: str,
     bind_to_core: bool,
 ) -> list[str]:
     command = ["ibrun"]
@@ -71,8 +89,12 @@ def _build_mpiexec_command(
             str(mpi_size),
             python_executable,
             str(WORKER),
+            "--backend",
+            backend,
             "--snakes-per-rank-exp",
             str(snakes_per_rank_exp),
+            "--snakes-per-rank-multiplier",
+            str(snakes_per_rank_multiplier),
             "--steps",
             str(steps),
             "--warmup-runs",
@@ -101,8 +123,10 @@ def _run_mpi_point(
     *,
     mpi_size: int,
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     warmup_runs: int,
+    backend: str,
     python_executable: str,
     bind_to_core: bool,
 ) -> RolloutPoint:
@@ -110,8 +134,10 @@ def _run_mpi_point(
         mpi_size=mpi_size,
         python_executable=python_executable,
         snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
         warmup_runs=warmup_runs,
+        backend=backend,
         bind_to_core=bind_to_core,
     )
     completed = subprocess.run(
@@ -122,9 +148,13 @@ def _run_mpi_point(
         text=True,
         env=_mpi_worker_env(mpi_size=mpi_size),
     )
-    snakes_per_rank = 2**snakes_per_rank_exp
+    snakes_per_rank = _snakes_per_rank(
+        snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+    )
     n_snakes_total = _global_snake_count(
         snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         mpi_size=mpi_size,
     )
     return (
@@ -139,21 +169,28 @@ def _sweep_mpi_sizes(
     mpi_sizes: tuple[int, ...],
     *,
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     warmup_runs: int,
+    backend: str,
     python_executable: str,
     bind_to_core: bool,
     verbose: bool,
 ) -> list[RolloutPoint]:
-    snakes_per_rank = 2**snakes_per_rank_exp
+    snakes_per_rank = _snakes_per_rank(
+        snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+    )
     results: list[RolloutPoint] = []
     for mpi_size in tqdm(mpi_sizes, desc="mpi", disable=not verbose):
         assert mpi_size > 0, "MPI world size must be positive."
         point = _run_mpi_point(
             mpi_size=mpi_size,
             snakes_per_rank_exp=snakes_per_rank_exp,
+            snakes_per_rank_multiplier=snakes_per_rank_multiplier,
             steps=steps,
             warmup_runs=warmup_runs,
+            backend=backend,
             python_executable=python_executable,
             bind_to_core=bind_to_core,
         )
@@ -178,11 +215,16 @@ def _flatten_rollout_samples(points: list[RolloutPoint]) -> list[RolloutSample]:
 def _export_scaling_plot(
     points: list[RolloutPoint],
     *,
+    backend: str,
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     output: Path,
 ) -> None:
-    snakes_per_rank = 2**snakes_per_rank_exp
+    snakes_per_rank = _snakes_per_rank(
+        snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+    )
     mpi_sizes = np.asarray([point[0] for point in points], dtype=np.float64)
     max_walltimes = np.asarray(
         [float(np.max(point[3])) for point in points],
@@ -203,8 +245,8 @@ def _export_scaling_plot(
     ax.set_xlabel("MPI world size")
     ax.set_ylabel("rollout walltime (s)")
     ax.set_title(
-        "MPI weak scaling "
-        f"(snakes_per_rank={snakes_per_rank}, {steps} steps, 20 elements/snake)"
+        f"MPI weak scaling ({backend}, snakes_per_rank={snakes_per_rank}, "
+        f"{steps} steps, 20 elements/snake)"
     )
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -219,6 +261,7 @@ def _export_scaling_csv(
     points: list[RolloutPoint],
     *,
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     output: Path,
 ) -> None:
@@ -233,6 +276,7 @@ def _export_scaling_csv(
                 "rank",
                 "rollout_walltime_s",
                 "snakes_per_rank_exp",
+                "snakes_per_rank_multiplier",
                 "steps",
             )
         )
@@ -251,6 +295,7 @@ def _export_scaling_csv(
                     rank,
                     walltime,
                     snakes_per_rank_exp,
+                    snakes_per_rank_multiplier,
                     steps,
                 )
             )
@@ -259,7 +304,7 @@ def _export_scaling_csv(
 
 def _load_scaling_csv(
     csv_path: Path,
-) -> tuple[list[RolloutPoint], int, int]:
+) -> tuple[list[RolloutPoint], int, int, int]:
     with csv_path.open(newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows, f"CSV {csv_path} is empty."
@@ -271,6 +316,7 @@ def _load_scaling_csv(
         mpi_size = int(rows[0]["mpi_size"])
         snakes_per_rank_exp = max(0, legacy_exp - int(np.log2(mpi_size)))
 
+    snakes_per_rank_multiplier = int(rows[0].get("snakes_per_rank_multiplier", 1))
     steps = int(rows[0]["steps"])
     grouped_rows: list[tuple[int, list[dict[str, str]]]] = []
     for mpi_size, mpi_size_rows_iter in itertools.groupby(
@@ -285,7 +331,15 @@ def _load_scaling_csv(
         points.append(
             (
                 mpi_size,
-                int(first_row.get("snakes_per_rank", 2**snakes_per_rank_exp)),
+                int(
+                    first_row.get(
+                        "snakes_per_rank",
+                        _snakes_per_rank(
+                            snakes_per_rank_exp=snakes_per_rank_exp,
+                            snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+                        ),
+                    )
+                ),
                 int(first_row["n_snakes"]),
                 np.asarray(
                     [
@@ -299,7 +353,7 @@ def _load_scaling_csv(
             )
         )
 
-    return points, snakes_per_rank_exp, steps
+    return points, snakes_per_rank_exp, snakes_per_rank_multiplier, steps
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -308,7 +362,14 @@ def _load_scaling_csv(
     type=int,
     default=4,
     show_default=True,
-    help="Fixed snakes per MPI rank (2 ** exp) for weak scaling.",
+    help="Fixed base snakes per MPI rank (2 ** exp) for weak scaling.",
+)
+@click.option(
+    "--snakes-per-rank-multiplier",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Scale the base per-rank snake count before weak scaling.",
 )
 @click.option("--steps", type=int, default=1000, show_default=True)
 @click.option("--warmup-runs", type=int, default=1, show_default=True)
@@ -351,9 +412,17 @@ def _load_scaling_csv(
     show_default=True,
     help="Pin each MPI rank to a CPU core via mpiexec (unsupported on macOS).",
 )
+@click.option(
+    "--backend",
+    type=click.Choice(["cpu", "cuda"], case_sensitive=False),
+    default="cpu",
+    show_default=True,
+    help="JAX backend for the MPI-local rod block.",
+)
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
     snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int,
     steps: int,
     warmup_runs: int,
     mpi_sizes: str,
@@ -361,16 +430,22 @@ def main(
     csv_output: Path | None,
     from_csv: Path | None,
     python_executable: str,
+    backend: str,
     bind_to_core: bool,
     quiet: bool,
 ) -> None:
     assert steps > 0, "steps must be positive."
+    assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
 
     if from_csv is not None:
-        points, snakes_per_rank_exp, steps = _load_scaling_csv(from_csv)
+        points, snakes_per_rank_exp, snakes_per_rank_multiplier, steps = (
+            _load_scaling_csv(from_csv)
+        )
         _export_scaling_plot(
             points,
+            backend=backend,
             snakes_per_rank_exp=snakes_per_rank_exp,
+            snakes_per_rank_multiplier=snakes_per_rank_multiplier,
             steps=steps,
             output=output,
         )
@@ -384,8 +459,10 @@ def main(
     points = _sweep_mpi_sizes(
         parsed_mpi_sizes,
         snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
         warmup_runs=warmup_runs,
+        backend=backend,
         python_executable=python_executable,
         bind_to_core=bind_to_core,
         verbose=not quiet,
@@ -395,12 +472,15 @@ def main(
     _export_scaling_csv(
         points,
         snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
         output=csv_path,
     )
     _export_scaling_plot(
         points,
+        backend=backend,
         snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
         output=output,
     )

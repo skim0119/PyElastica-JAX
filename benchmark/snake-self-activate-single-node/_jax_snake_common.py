@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -242,9 +243,9 @@ def build_jax_sim(
             device_dtype=np.dtype(device_dtype),
         )
     else:
-        assert isinstance(
-            device, jax.Device
-        ), "A non-sharded JAX block requires exactly one device."
+        assert isinstance(device, jax.Device), (
+            "A non-sharded JAX block requires exactly one device."
+        )
         rod_block = eaj.configure_rod_block(
             device=device,
             device_dtype=np.dtype(device_dtype),
@@ -488,16 +489,81 @@ def run_jax_rollout_gpu2x(
     return instantiate_seconds, rollout_seconds
 
 
+def mpi_snakes_per_rank(
+    *,
+    snakes_per_rank_exp: int,
+    snakes_per_rank_multiplier: int = 1,
+) -> int:
+    """
+    Return the number of snakes owned by one MPI rank.
+
+    Parameters
+    ----------
+    snakes_per_rank_exp
+        Exponent for the base per-rank snake count ``2 ** exp``.
+    snakes_per_rank_multiplier
+        Scalar applied before weak scaling across MPI ranks. Use this to make
+        one GPU rank match the aggregate work of several CPU ranks on a node.
+
+    Returns
+    -------
+    int
+        ``snakes_per_rank_multiplier * (2 ** snakes_per_rank_exp)``.
+    """
+    assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
+    return snakes_per_rank_multiplier * (2**snakes_per_rank_exp)
+
+
+def mpi_global_snake_count(
+    *,
+    snakes_per_rank_exp: int,
+    comm_size: int,
+    snakes_per_rank_multiplier: int = 1,
+) -> int:
+    """Return the weak-scaling global snake count for an MPI world size."""
+    return mpi_snakes_per_rank(
+        snakes_per_rank_exp=snakes_per_rank_exp,
+        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+    ) * comm_size
+
+
+def resolve_mpi_block_device(*, backend: str, comm: Any) -> jax.Device:
+    """
+    Return the JAX device for one MPI rank's local rod block.
+
+    Parameters
+    ----------
+    backend
+        JAX backend name such as ``"cpu"`` or ``"cuda"``.
+    comm
+        MPI communicator used to resolve a fallback local rank.
+
+    Returns
+    -------
+    jax.Device
+        Device passed to ``configure_rod_block_mpi``.
+    """
+    devices = eaj.resolve_backend_devices(backend)
+    if backend == "cpu":
+        return devices[0]
+
+    local_rank = int(os.environ.get("SLURM_LOCALID", comm.Get_rank()))
+    return devices[local_rank % len(devices)]
+
+
 def build_jax_sim_mpi(
     *,
     comm: Any,
     device_dtype: np.dtype,
     n_snakes_total: int,
+    backend: str = "cpu",
 ) -> tuple[JAXSimulator, eaj._MpiCosseratRodBlock]:
     """Build a JAX simulator with rods distributed across MPI ranks."""
+    device = resolve_mpi_block_device(backend=backend, comm=comm)
     rod_block = eaj.configure_rod_block_mpi(
         comm=comm,
         device_dtype=np.dtype(device_dtype),
+        device=device,
     )
     simulator = JAXSimulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
@@ -515,6 +581,7 @@ def run_jax_rollout_mpi(
     n_snakes_total: int,
     steps: int,
     warmup_runs: int,
+    backend: str = "cpu",
 ) -> tuple[float, list[float] | None]:
     """
     Build an MPI-local JAX block simulator and time a Position Verlet rollout.
@@ -529,6 +596,8 @@ def run_jax_rollout_mpi(
         Number of timed integration steps.
     warmup_runs
         Number of warmup integration chunks before timing.
+    backend
+        JAX backend for the MPI-local rod block, such as ``"cpu"`` or ``"cuda"``.
 
     Returns
     -------
@@ -540,20 +609,23 @@ def run_jax_rollout_mpi(
     from mpi4py import MPI
 
     dtype = np.dtype(np.float64)
+    device = resolve_mpi_block_device(backend=backend, comm=comm)
     instantiate_start = time.perf_counter()
-    jax_sim, jax_block = build_jax_sim_mpi(
-        comm=comm,
-        device_dtype=dtype,
-        n_snakes_total=n_snakes_total,
-    )
-    _block_until_ready((jax_block,))
-    instantiate_seconds = time.perf_counter() - instantiate_start
-    rollout_seconds = integrate_jax_block_rollout(
-        jax_sim,
-        (jax_block,),
-        steps=steps,
-        warmup_runs=warmup_runs,
-    )
+    with jax.default_device(device):
+        jax_sim, jax_block = build_jax_sim_mpi(
+            comm=comm,
+            device_dtype=dtype,
+            n_snakes_total=n_snakes_total,
+            backend=backend,
+        )
+        _block_until_ready((jax_block,))
+        instantiate_seconds = time.perf_counter() - instantiate_start
+        rollout_seconds = integrate_jax_block_rollout(
+            jax_sim,
+            (jax_block,),
+            steps=steps,
+            warmup_runs=warmup_runs,
+        )
     rollout_seconds_all_ranks = comm.gather(rollout_seconds, root=0)
     instantiate_seconds = comm.allreduce(instantiate_seconds, op=MPI.MAX)
     return instantiate_seconds, rollout_seconds_all_ranks
