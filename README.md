@@ -1,5 +1,5 @@
 <div align='center'>
-<h1> PyElastica-JAX </h1>
+<h1> PyElastica-JAX (& MPI) </h1>
 </div>
 
 JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) framework for simulating assemblies of Cosserat Rods.
