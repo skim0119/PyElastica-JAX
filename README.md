@@ -337,6 +337,9 @@ For now, it is working when rod pair is on the same device.
 
 ## Advanced Usage
 
+> The following advanced usage methods may require special care. They are not guaranteed to be compatible with each other unless explicitly specified, and should generally be used independently for correct behavior.
+> Scaling is not yet guaranteed to be optimal, and may depends on hardwares.
+
 ### GPU Execution
 
 Pass an explicit backend to `configure_rod_block` so rod state is allocated on that

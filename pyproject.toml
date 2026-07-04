@@ -31,10 +31,12 @@ dependencies = [
     "click",
     "jax",
     "h5py",
+    "mpi4py",
+    "mpi4jax",
 ]
 
 [tool.uv]
-no-binary-pacage = ["h5py"]
+no-binary-package = ["h5py", "mpi4py"]
 
 [build-system]
 requires = ["hatchling"]
