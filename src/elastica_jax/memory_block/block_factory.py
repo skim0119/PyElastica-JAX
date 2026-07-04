@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence, Type
+from typing import Any, Sequence, Type
 
 import jax
 import numpy as np
 
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
+from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import _ShardedCosseratRodBlock
 
 DEFAULT_ROD_BLOCK_BACKEND = "cpu"
@@ -84,4 +85,26 @@ def configure_rod_block_sharded(
         device_dtype=_normalize_device_dtype(device_dtype),
         block_checkpoint=block_checkpoint,
         inner_block_cls=inner_block_cls,
+    )
+
+
+def configure_rod_block_mpi(
+    *,
+    comm: Any,
+    device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
+    inner_block_cls: Type[_CosseratRodMemoryBlock] = _CosseratRodMemoryBlock,
+    device: str | jax.Device = DEFAULT_ROD_BLOCK_BACKEND,
+) -> _MpiCosseratRodBlock:
+    """
+    Return a configured MPI-local Cosserat rod block for ``enable_block_supports``.
+
+    Each MPI rank appends only the rods it owns, typically using
+    ``block.owns_rod(global_index)``, then builds one local memory block during
+    ``finalize()``.
+    """
+    return _MpiCosseratRodBlock(
+        comm=comm,
+        device_dtype=_normalize_device_dtype(device_dtype),
+        inner_block_cls=inner_block_cls,
+        device=device,
     )

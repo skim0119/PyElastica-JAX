@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -77,7 +77,9 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 
-JAXRodBlock: TypeAlias = eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock
+JAXRodBlock: TypeAlias = (
+    eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock | eaj._MpiCosseratRodBlock
+)
 
 
 def two_gpu_sharded_devices() -> tuple[jax.Device, ...]:
@@ -480,4 +482,56 @@ def run_jax_rollout_gpu2x(
         warmup_runs=warmup_runs,
     )
 
+    return instantiate_seconds, rollout_seconds
+
+
+def build_jax_sim_mpi(
+    *,
+    comm: Any,
+    device_dtype: np.dtype,
+    n_snakes_total: int,
+) -> tuple[JAXSimulator, eaj._MpiCosseratRodBlock]:
+    """Build a JAX simulator with rods distributed across MPI ranks."""
+    rod_block = eaj.configure_rod_block_mpi(
+        comm=comm,
+        device_dtype=np.dtype(device_dtype),
+    )
+    simulator = JAXSimulator()
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
+    for snake_index in range(n_snakes_total):
+        if rod_block.owns_rod(snake_index):
+            simulator.append(build_rod())
+    _configure_jax_block_operators(simulator, (rod_block,))
+    simulator.finalize()
+    return simulator, rod_block
+
+
+def run_jax_rollout_mpi(
+    *,
+    comm: Any,
+    n_snakes_total: int,
+    steps: int,
+    warmup_runs: int,
+) -> BenchmarkTiming:
+    """Build an MPI-local JAX block simulator and time a Position Verlet rollout."""
+    from mpi4py import MPI
+
+    dtype = np.dtype(np.float64)
+    instantiate_start = time.perf_counter()
+    jax_sim, jax_block = build_jax_sim_mpi(
+        comm=comm,
+        device_dtype=dtype,
+        n_snakes_total=n_snakes_total,
+    )
+    _block_until_ready((jax_block,))
+    instantiate_seconds = time.perf_counter() - instantiate_start
+    rollout_seconds = integrate_jax_block_rollout(
+        jax_sim,
+        (jax_block,),
+        steps=steps,
+        warmup_runs=warmup_runs,
+    )
+    comm.Barrier()
+    rollout_seconds = comm.allreduce(rollout_seconds, op=MPI.MAX)
+    instantiate_seconds = comm.allreduce(instantiate_seconds, op=MPI.MAX)
     return instantiate_seconds, rollout_seconds

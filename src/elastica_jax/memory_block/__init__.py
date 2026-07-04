@@ -1,7 +1,9 @@
 from .memory_block_rigid_body_jax import MemoryBlockRigidBodyJax
 from .block_factory import (
     configure_rod_block,
+    configure_rod_block_mpi,
     configure_rod_block_sharded,
     resolve_backend_devices,
 )
 from .memory_block_rod_jax import _CosseratRodMemoryBlock
+from .mpi_cosserat_rod_jax import _MpiCosseratRodBlock

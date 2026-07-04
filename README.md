@@ -392,14 +392,96 @@ operators that couple independent blocks are currently rejected.
 
 ### Multi-core Multi-host CPU Execution
 
-TODO: `mpi4jax` integration for multi-core MPI execution.
+> Work-in-progress
+
+`PyElastica-JAX` includes `mpi` block layout support, to ease the simulation setup in `mpi` manner.
+
+> Implementation of cross-rank operators is possible with rod-rod operation, but front API is not yet designed. Leave issues if you have any suggestions or recommendations.
+
+Following example outlines a cantilever simulation under uniform gravity using the
+built-in `GravityAnalyticalDamperJax` operator across MPI ranks:
+
+```py
+import os
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+
+# Expose local CPU cores to JAX on each MPI rank (set before importing jax).
+n_local_devices = 1
+os.environ["XLA_FLAGS"] = (
+    f"--xla_force_host_platform_device_count={n_local_devices}"
+)
+
+import numpy as np
+import jax
+
+import elastica as ea
+import elastica_jax as eaj
+
+jax.config.update("jax_enable_x64", True)
+
+
+class CantileverSimulator(
+    ea.BaseSystemCollection,
+    eaj.JAXOpsBlock
+):
+    pass
+
+
+simulator = CantileverSimulator()
+rod_block = eaj.configure_rod_block_mpi(
+    comm=comm,
+    device_dtype=np.float64,
+)
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
+
+# Each MPI rank owns a disjoint rod subset.
+n_rods_total = 64
+for rod_index in range(n_rods_total):
+    if rod_block.owns_rod(rod_index):  # REVIEW: This pattern seems not ideal
+        rod = ea.CosseratRod.straight_rod(
+            n_elements=20,
+            start=np.array([0.1 * rod_index, 0.0, 0.0]),
+            direction=np.array([0.0, 0.0, 1.0]),
+            normal=np.array([0.0, 1.0, 0.0]),
+            base_length=0.35,
+            base_radius=0.01,
+            density=1_000.0,
+            youngs_modulus=5.0e6,
+        )
+        simulator.append(rod)
+
+dt = 1.0e-4
+simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
+simulator.operate_block(rod_block).using(
+    eaj.GravityAnalyticalDamperJax,
+    time_step=dt,
+    uniform_damping_constant=0.5,
+)
+simulator.finalize()
+
+stepper = eaj.PositionVerletJAX()
+stepper.integrate(
+    simulator,
+    time=0.0,
+    final_time=10.0,
+    dt=dt,
+)
+comm.Barrier()
+```
+
+Launch with `mpirun -n <world_size> python script.py`. Cross-rank block operators
+that require halo exchange will use `mpi4jax`; gravity and one-end-fixed constraints
+are local to each rank's block.
 
 ## Terminology
 
 This repository expand the usage of `block` concept directly, along with `JAX`'s concept of mapping memory and function.
 
 - `memory_block` is a block that is a collection of rods (systems).
-- `sharded_block` is a block that is sharded into multiple blocks.
+- `sharded_block` is a block that is sharded into multiple blocks on one process.
+- `mpi_block` is a rank-local memory block: rods are partitioned across MPI ranks.
 
 ## Features that are extended from PyElastica
 

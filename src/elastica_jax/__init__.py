@@ -7,9 +7,11 @@ from elastica_jax.timestepper.jax_steppers import PositionVerletJAX
 from elastica_jax.memory_block.memory_block_rigid_body_jax import (
     MemoryBlockRigidBodyJax,
 )
+from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.block_factory import (
     configure_rod_block,
+    configure_rod_block_mpi,
     configure_rod_block_sharded,
     resolve_backend_devices,
 )

@@ -12,6 +12,9 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     _SYNCABLE_ATTRS,
     _VORONOI_ATTRS,
 )
+from elastica_jax.memory_block.mpi_cosserat_rod_jax import (
+    _MpiCosseratRodBlock,
+)
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
     _ShardedCosseratRodBlock,
@@ -636,7 +639,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     def _find_target_block(
         final_systems: tuple[Any, ...],
         target: JAXBlockOpTarget | Type[Any],
-    ) -> tuple[int, _CosseratRodMemoryBlock | _ShardedCosseratRodBlock]:
+    ) -> tuple[int, _CosseratRodMemoryBlock | _ShardedCosseratRodBlock | _MpiCosseratRodBlock]:
         if not isinstance(target, type):
             for block_state_idx, system in enumerate(final_systems):
                 if system is target:
@@ -650,15 +653,17 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         target_type = target
         for block_state_idx, system in enumerate(final_systems):
             if not isinstance(
-                system, (_CosseratRodMemoryBlock, _ShardedCosseratRodBlock)
+                system,
+                (_CosseratRodMemoryBlock, _ShardedCosseratRodBlock, _MpiCosseratRodBlock),
             ):
                 continue
             if isinstance(system, target_type):
                 return block_state_idx, system
-            if isinstance(system, _ShardedCosseratRodBlock):
-                if (
-                    target_type is _CosseratRodMemoryBlock
-                    or target_type is _ShardedCosseratRodBlock
+            if isinstance(system, (_ShardedCosseratRodBlock, _MpiCosseratRodBlock)):
+                if target_type in (
+                    _CosseratRodMemoryBlock,
+                    _ShardedCosseratRodBlock,
+                    _MpiCosseratRodBlock,
                 ):
                     return block_state_idx, system
             if any(isinstance(subsystem, target_type) for subsystem in system._systems):
