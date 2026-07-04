@@ -64,9 +64,7 @@ def _build_mpiexec_command(
     warmup_runs: int,
     bind_to_core: bool,
 ) -> list[str]:
-    command = ["mpiexec"]
-    if bind_to_core:
-        command.extend(["--bind-to", "core", "--map-by", "core"])
+    command = ["ibrun"]
     command.extend(
         [
             "-n",
