@@ -16,6 +16,16 @@ if str(SINGLE_NODE_DIR) not in sys.path:
 import click
 from mpi4py import MPI
 
+comm = MPI.COMM_WORLD
+os.environ.setdefault(
+    "JAX_COMPILATION_CACHE_DIR",
+    f"/tmp/pyelastica_jax_mpi_cache_rank{comm.Get_rank()}",
+)
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 from _jax_snake_common import run_jax_rollout_mpi
 
 
@@ -31,9 +41,9 @@ def run(
     steps: int,
     warmup_runs: int,
     comm: MPI.Intracomm | None = None,
-) -> float:
+) -> list[float] | None:
     """
-    Run one weak-scaling MPI rollout and return the max rank rollout time.
+    Run one weak-scaling MPI rollout and return all per-rank rollout times.
 
     Each rank owns ``2 ** snakes_per_rank_exp`` snakes. The global snake count
     grows linearly with ``comm_size``.
@@ -51,8 +61,9 @@ def run(
 
     Returns
     -------
-    float
-        Maximum rollout walltime across MPI ranks in seconds.
+    list[float] | None
+        Gathered per-rank rollout walltimes in seconds on rank 0. Non-root
+        ranks receive ``None``.
     """
     if comm is None:
         comm = MPI.COMM_WORLD
@@ -60,13 +71,13 @@ def run(
         snakes_per_rank_exp=snakes_per_rank_exp,
         comm_size=comm.Get_size(),
     )
-    _, rollout_walltime = run_jax_rollout_mpi(
+    _, rollout_walltimes = run_jax_rollout_mpi(
         comm=comm,
         n_snakes_total=n_snakes_total,
         steps=steps,
         warmup_runs=warmup_runs,
     )
-    return rollout_walltime
+    return rollout_walltimes
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -90,17 +101,21 @@ def main(
         snakes_per_rank_exp=snakes_per_rank_exp,
         comm_size=comm.Get_size(),
     )
-    rollout_walltime = run(
+    rollout_walltimes = run(
         snakes_per_rank_exp=snakes_per_rank_exp,
         steps=steps,
         warmup_runs=warmup_runs,
         comm=comm,
     )
     if comm.Get_rank() == 0:
+        assert rollout_walltimes is not None, "Rank 0 must receive gathered timings."
+        rollout_walltimes_csv = ",".join(
+            f"{rollout_walltime:.18e}" for rollout_walltime in rollout_walltimes
+        )
         print(f"mpi_size={comm.Get_size()}")
         print(f"snakes_per_rank={snakes_per_rank}")
         print(f"n_snakes={n_snakes_total}")
-        print(f"rollout_walltime={rollout_walltime:.6f}")
+        print(f"rollout_walltimes={rollout_walltimes_csv}")
 
 
 if __name__ == "__main__":

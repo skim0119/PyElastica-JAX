@@ -78,7 +78,9 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 
 
 JAXRodBlock: TypeAlias = (
-    eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock | eaj._MpiCosseratRodBlock
+    eaj._CosseratRodMemoryBlock
+    | eaj._ShardedCosseratRodBlock
+    | eaj._MpiCosseratRodBlock
 )
 
 
@@ -240,9 +242,9 @@ def build_jax_sim(
             device_dtype=np.dtype(device_dtype),
         )
     else:
-        assert isinstance(device, jax.Device), (
-            "A non-sharded JAX block requires exactly one device."
-        )
+        assert isinstance(
+            device, jax.Device
+        ), "A non-sharded JAX block requires exactly one device."
         rod_block = eaj.configure_rod_block(
             device=device,
             device_dtype=np.dtype(device_dtype),
@@ -380,15 +382,16 @@ def integrate_jax_block_rollout(
     dt_value = DEFAULT_DT
     stepper = eaj.PositionVerletJAX()
     time_value = np.float64(0.0)
-    time_value = stepper.integrate(
-        jax_sim,
-        time=time_value,
-        final_time=time_value + warmup_runs * dt_value,
-        dt=dt_value,
-    )
-    _block_until_ready(jax_blocks)
+    for _ in range(warmup_runs):
+        time_value = stepper.integrate(
+            jax_sim,
+            time=time_value,
+            final_time=time_value + steps * dt_value,
+            dt=dt_value,
+        )
+        _block_until_ready(jax_blocks)
     rollout_start = time.perf_counter()
-    stepper.integrate(
+    time_value = stepper.integrate(
         jax_sim,
         time=time_value,
         final_time=time_value + steps * dt_value,
@@ -512,8 +515,28 @@ def run_jax_rollout_mpi(
     n_snakes_total: int,
     steps: int,
     warmup_runs: int,
-) -> BenchmarkTiming:
-    """Build an MPI-local JAX block simulator and time a Position Verlet rollout."""
+) -> tuple[float, list[float] | None]:
+    """
+    Build an MPI-local JAX block simulator and time a Position Verlet rollout.
+
+    Parameters
+    ----------
+    comm
+        MPI communicator used to gather rollout timing samples.
+    n_snakes_total
+        Total number of snakes across all MPI ranks.
+    steps
+        Number of timed integration steps.
+    warmup_runs
+        Number of warmup integration chunks before timing.
+
+    Returns
+    -------
+    tuple[float, list[float] | None]
+        Maximum instantiation time across ranks and gathered per-rank rollout
+        times on rank 0. Non-root ranks receive ``None`` for the gathered
+        rollout times.
+    """
     from mpi4py import MPI
 
     dtype = np.dtype(np.float64)
@@ -531,7 +554,6 @@ def run_jax_rollout_mpi(
         steps=steps,
         warmup_runs=warmup_runs,
     )
-    comm.Barrier()
-    rollout_seconds = comm.allreduce(rollout_seconds, op=MPI.MAX)
+    rollout_seconds_all_ranks = comm.gather(rollout_seconds, root=0)
     instantiate_seconds = comm.allreduce(instantiate_seconds, op=MPI.MAX)
-    return instantiate_seconds, rollout_seconds
+    return instantiate_seconds, rollout_seconds_all_ranks
