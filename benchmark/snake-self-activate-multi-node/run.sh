@@ -1,3 +1,4 @@
+#!/bin/sh
 #SBATCH --job-name=multi_node
 #SBATCH --nodes=28
 #SBATCH --ntasks-per-node=144
@@ -18,6 +19,7 @@ srun --ntasks="${SLURM_NNODES}" --ntasks-per-node=1 \
     bash -c "
         source ~/localrc.sh
         cd \"\${REPO_ROOT}\"
+        uv sync --python 3.11
         source \"\${UV_PROJECT_ENVIRONMENT}/bin/activate\"
     "
 echo "node venv setup finished in $((SECONDS - setup_start))s"
