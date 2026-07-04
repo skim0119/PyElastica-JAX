@@ -1,10 +1,9 @@
 #!/bin/sh
 #SBATCH --job-name=multi_node_gpu
-#SBATCH --nodes=28
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-task=1
-#SBATCH --time=12:00:00
-#SBATCH --partition=gg
+#SBATCH --time=02:00:00
+#SBATCH --partition=gh-dev
 #SBATCH --output=logs/slurm_multi_node_gpu_%j.out
 #SBATCH --error=logs/slurm_multi_node_gpu_%j.err
 
