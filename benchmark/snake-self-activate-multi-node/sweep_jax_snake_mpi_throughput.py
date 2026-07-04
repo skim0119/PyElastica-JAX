@@ -119,6 +119,30 @@ def _summarize_weak_scaling(points: list[RolloutPoint]) -> None:
         )
 
 
+def _format_mpi_worker_failure(
+    exc: subprocess.CalledProcessError,
+    *,
+    mpi_size: int,
+    command: list[str],
+) -> str:
+    """Build a readable error report for a failed MPI worker launch."""
+    command_text = " ".join(command)
+    stdout = exc.stdout.strip() if exc.stdout else ""
+    stderr = exc.stderr.strip() if exc.stderr else ""
+    sections = [
+        f"MPI weak-scaling worker failed for mpi_size={mpi_size} "
+        f"(exit code {exc.returncode}).",
+        f"Command: {command_text}",
+    ]
+    if stdout:
+        sections.append(f"stdout:\n{stdout}")
+    if stderr:
+        sections.append(f"stderr:\n{stderr}")
+    if not stdout and not stderr:
+        sections.append("stdout/stderr: (empty)")
+    return "\n\n".join(sections)
+
+
 def _run_mpi_point(
     *,
     mpi_size: int,
@@ -140,14 +164,19 @@ def _run_mpi_point(
         backend=backend,
         bind_to_core=bind_to_core,
     )
-    completed = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=_mpi_worker_env(mpi_size=mpi_size),
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_mpi_worker_env(mpi_size=mpi_size),
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            _format_mpi_worker_failure(exc, mpi_size=mpi_size, command=command)
+        ) from exc
     snakes_per_rank = _snakes_per_rank(
         snakes_per_rank_exp=snakes_per_rank_exp,
         snakes_per_rank_multiplier=snakes_per_rank_multiplier,
