@@ -22,9 +22,10 @@ srun --ntasks="${SLURM_NNODES}" --ntasks-per-node=1 \
     "
 echo "node venv setup finished in $((SECONDS - setup_start))s"
 
-ibrun -n "${SLURM_NTASKS}" \
-    "${PYTHON_BIN}" "sweep_jax_snake_mpi_throughput.py" \
-        --mpi-sizes "1,2,4,8" \
-        --snakes-per-rank-exp 8 \
-        --steps 1000 \
-        --warmup-runs 5
+"${PYTHON_BIN}" "sweep_jax_snake_mpi_throughput.py" \
+    --mpi-sizes "1,2,4,8" \
+    --snakes-per-rank-exp 8 \
+    --steps 1000 \
+    --warmup-runs 5 \
+    --python "${PYTHON_BIN}" \
+    --output "scaling_plot.png"
