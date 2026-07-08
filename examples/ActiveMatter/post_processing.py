@@ -1,43 +1,144 @@
-"""MPI-parallel renderer for active-matter HDF5 frame dumps."""
+"""MPI-parallel renderer for active-matter snake-pit HDF5 frame dumps.
+
+Reads chunked ``frame_*.h5`` dumps and ``metadata.h5`` from ``data/`` (or
+``data_<run-name>/``), renders top/side planar views per frame to
+``render/png/``, and assembles ``render/output.mp4`` with ffmpeg. Rendering is
+split across MPI ranks; run standalone or under ``mpiexec``.
+"""
 
 from __future__ import annotations
 
-import click
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import click
+
 _EXAMPLE_DIR = Path(__file__).resolve().parent
 if str(_EXAMPLE_DIR) not in sys.path:
     sys.path.insert(0, str(_EXAMPLE_DIR))
 
-import matplotlib
+import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
-from frame_io import list_frame_paths, load_frame_positions, load_simulation_metadata
-from simulation_runtime import (
-    png_dir_for,
-    resolve_output_dir,
-    video_path_for,
+from frame_io import (  # noqa: E402
+    list_frame_paths,
+    load_frame_positions,
+    load_simulation_metadata,
 )
 
-from mpi4py import MPI
+from mpi4py import MPI  # noqa: E402
 
 
-def _third_axis(axis_a: int, axis_b: int) -> int:
-    return ({0, 1, 2} - {axis_a, axis_b}).pop()
+def render_all(
+    *,
+    run_name: str | None,
+    dpi: int = 150,
+    skip_ffmpeg: bool = False,
+) -> None:
+    """Render every frame to PNGs and assemble an mp4 across MPI ranks.
+
+    Parameters
+    ----------
+    run_name : str | None
+        Selects the ``data``/``render`` pair (``data_<run-name>`` when set).
+    dpi : int, optional
+        Figure resolution for the PNG frames.
+    skip_ffmpeg : bool, optional
+        Render PNG frames only and skip the mp4 assembly.
+    """
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    input_dir = _EXAMPLE_DIR / ("data" if run_name is None else f"data_{run_name}")
+    render_root = _EXAMPLE_DIR / (
+        "render" if run_name is None else f"render_{run_name}"
+    )
+    frame_png_dir = render_root / "png"
+    metadata_path = input_dir / "metadata.h5"
+    assert metadata_path.is_file(), f"Missing simulation metadata at {metadata_path}."
+
+    metadata = load_simulation_metadata(metadata_path)
+    fps = float(metadata["fps"])
+    frame_paths = list_frame_paths(input_dir)
+    assert frame_paths, f"No frame_*.h5 files found in {input_dir}."
+
+    local_frames = [
+        path for index, path in enumerate(frame_paths) if index % size == rank
+    ]
+    total_frames = len(frame_paths)
+    if rank == 0:
+        print(f"rendering {total_frames} frames from {input_dir} at {fps:g} fps")
+        print(f"MPI ranks={size}")
+
+    for run_index, frame_path in enumerate(local_frames):
+        frame_idx = int(frame_path.stem.split("_")[-1])
+        out_png = frame_png_dir / f"frame_{frame_idx:06d}.png"
+        render_frame_png(frame_path, out_png, metadata=metadata, dpi=dpi)
+        if total_frames > 0 and run_index % max(1, total_frames // 50) == 0:
+            percent = 100.0 * (run_index + 1) / total_frames
+            print(f"rank={rank} wrote {out_png} ({percent:.1f}%)", flush=True)
+
+    comm.Barrier()
+
+    if rank == 0 and not skip_ffmpeg:
+        out_video = render_root / "output.mp4"
+        _run_ffmpeg(png_root=frame_png_dir, output_video=out_video, fps=fps)
+        print(f"wrote {out_video}")
 
 
-def _view_definitions(case: str) -> tuple[dict[str, object], dict[str, object]]:
-    del case
+def render_frame_png(
+    frame_path: Path,
+    out_png: Path,
+    *,
+    metadata: dict[str, object],
+    dpi: int,
+) -> None:
+    """Render one frame as side-by-side top and side planar views."""
+    positions, frame_attrs = load_frame_positions(frame_path)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+
+    top_view, side_view = _view_definitions()
+    wall_origins = np.asarray(metadata["wall_origins"])
+    wall_normals = np.asarray(metadata["wall_normals"])
+
+    fig, (ax_top, ax_side) = plt.subplots(1, 2, figsize=(12, 5), dpi=dpi)
+    _configure_planar_axes(
+        ax_top,
+        positions,
+        view=top_view,
+        wall_origins=wall_origins,
+        wall_normals=wall_normals,
+    )
+    _configure_planar_axes(
+        ax_side,
+        positions,
+        view=side_view,
+        wall_origins=wall_origins,
+        wall_normals=wall_normals,
+    )
+
+    time_value = float(frame_attrs.get("time", 0.0))
+    fig.suptitle(f"t = {time_value:.4f} s")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _view_definitions() -> tuple[dict[str, object], dict[str, object]]:
     return (
         {"axis_a": 0, "axis_b": 1, "label_a": "x", "label_b": "y", "name": "Top view"},
         {"axis_a": 0, "axis_b": 2, "label_a": "x", "label_b": "z", "name": "Side view"},
     )
+
+
+def _third_axis(axis_a: int, axis_b: int) -> int:
+    return ({0, 1, 2} - {axis_a, axis_b}).pop()
 
 
 def _planar_limits(
@@ -152,54 +253,11 @@ def _configure_planar_axes(
         )
 
 
-def render_frame_png(
-    frame_path: Path,
-    png_path: Path,
-    *,
-    metadata: dict[str, object],
-    dpi: int,
-) -> None:
-    positions, frame_attrs = load_frame_positions(frame_path)
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-
-    case_name = str(metadata.get("case", "snake-pit"))
-    top_view, side_view = _view_definitions(case_name)
-    wall_origins = np.asarray(metadata["wall_origins"])
-    wall_normals = np.asarray(metadata["wall_normals"])
-
-    fig, (ax_top, ax_side) = plt.subplots(1, 2, figsize=(12, 5), dpi=dpi)
-    _configure_planar_axes(
-        ax_top,
-        positions,
-        view=top_view,
-        wall_origins=wall_origins,
-        wall_normals=wall_normals,
-    )
-    _configure_planar_axes(
-        ax_side,
-        positions,
-        view=side_view,
-        wall_origins=wall_origins,
-        wall_normals=wall_normals,
-    )
-
-    time_value = float(frame_attrs.get("time", 0.0))
-    fig.suptitle(f"t = {time_value:.4f} s")
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-
-
-def _run_ffmpeg(
-    *,
-    png_dir: Path,
-    output_video: Path,
-    fps: float,
-) -> None:
+def _run_ffmpeg(*, png_root: Path, output_video: Path, fps: float) -> None:
     ffmpeg = shutil.which("ffmpeg")
     assert ffmpeg is not None, "ffmpeg is required to assemble the mp4 video."
     output_video.parent.mkdir(parents=True, exist_ok=True)
-    pattern = str(png_dir / "frame_%06d.png")
+    pattern = str(png_root / "frame_%06d.png")
     command = [
         ffmpeg,
         "-y",
@@ -222,7 +280,7 @@ def _run_ffmpeg(
 @click.option(
     "--run-name",
     default=None,
-    help='Read from "output" or "output_<run-name>" (must match the simulation run).',
+    help='Read from "data" or "data_<run-name>" (must match the simulation run).',
 )
 @click.option("--dpi", default=150, show_default=True)
 @click.option(
@@ -230,52 +288,9 @@ def _run_ffmpeg(
     is_flag=True,
     help="Only render PNG frames and skip ffmpeg assembly.",
 )
-def main(
-    run_name: str | None,
-    dpi: int,
-    skip_ffmpeg: bool,
-) -> None:
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    output_dir = resolve_output_dir(run_name)
-    png_dir = png_dir_for(output_dir)
-    metadata_path = output_dir / "metadata.h5"
-    assert metadata_path.is_file(), f"Missing simulation metadata at {metadata_path}."
-
-    metadata = load_simulation_metadata(metadata_path)
-    fps = float(metadata["fps"])
-    frame_paths = list_frame_paths(output_dir)
-    assert frame_paths, f"No frame_*.h5 files found in {output_dir}."
-
-    local_frames = [
-        path for index, path in enumerate(frame_paths) if index % size == rank
-    ]
-    if rank == 0:
-        print(f"rendering {len(frame_paths)} frames from {output_dir} at {fps:g} fps")
-        print(f"MPI ranks={size}")
-
-    total_frames = len(frame_paths)
-    for run_index, frame_path in enumerate(local_frames):
-        frame_idx = int(frame_path.stem.split("_")[-1])
-        png_path = png_dir / f"frame_{frame_idx:06d}.png"
-        render_frame_png(
-            frame_path,
-            png_path,
-            metadata=metadata,
-            dpi=dpi,
-        )
-        if total_frames > 0 and run_index % max(1, total_frames // 50) == 0:
-            percent = 100.0 * (run_index + 1) / total_frames
-            print(f"rank={rank} wrote {png_path} ({percent:.1f}%)", flush=True)
-
-    comm.Barrier()
-
-    if rank == 0 and not skip_ffmpeg:
-        video_path = video_path_for(run_name)
-        _run_ffmpeg(png_dir=png_dir, output_video=video_path, fps=fps)
-        print(f"wrote {video_path}")
+def main(run_name: str | None, dpi: int, skip_ffmpeg: bool) -> None:
+    """Render snake-pit frames from ``data/`` into ``render/``."""
+    render_all(run_name=run_name, dpi=dpi, skip_ffmpeg=skip_ffmpeg)
 
 
 if __name__ == "__main__":

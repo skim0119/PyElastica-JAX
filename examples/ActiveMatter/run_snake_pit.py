@@ -1,14 +1,23 @@
-"""GPU JAX reproduction of the enclosed snake-pit active-matter case."""
+"""GPU JAX reproduction of the enclosed snake-pit active-matter case.
+
+Randomly packed active snakes are enclosed by a floor and four side walls, driven
+by a traveling-wave internal torque, and resolved with capsule-capsule rod-rod
+contact and capsule-half-space wall contact. Node positions are streamed to
+chunked HDF5 frames under ``data/`` for offline rendering (see
+``post_processing.py``). Reference physics live in ``CASE_DESCRIPTION.md``.
+
+Configuration lives in :class:`SnakePitParameters` below; ``--smoke`` downscales
+the run while still exercising every operator.
+"""
 
 from __future__ import annotations
 
-import click
-from collections.abc import Sequence
-from dataclasses import dataclass
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
+import click
 import numpy as np
 from tqdm import tqdm
 
@@ -16,31 +25,33 @@ _EXAMPLE_DIR = Path(__file__).resolve().parent
 if str(_EXAMPLE_DIR) not in sys.path:
     sys.path.insert(0, str(_EXAMPLE_DIR))
 
-from forcing import ActiveMatterForcingJax, spline_actuation_amplitude
-from frame_io import (
+from environment import build_simulation  # noqa: E402
+from frame_io import (  # noqa: E402
     extract_stacked_positions,
     save_frame_positions,
     save_simulation_metadata,
 )
-from simulation_runtime import resolve_output_dir
-from utils import instantiate_rods_in_cylinder
 
-import elastica as ea
-import elastica_jax as eaj
-import jax
-from jax import config as jax_config
+import elastica_jax as eaj  # noqa: E402
+import jax  # noqa: E402
+from jax import config as jax_config  # noqa: E402
 
 jax_config.update("jax_enable_x64", True)
 
 
-class SnakePitSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
-    pass
-
-
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class SnakePitParameters:
+    """Physical and numerical parameters for the snake-pit case.
+
+    ``n_snakes`` and ``final_time`` are supplied by the CLI (or :meth:`smoke`);
+    the remaining fields default to the reference case and can be edited here to
+    change physics or scale.
+    """
+
+    n_snakes: int
+    final_time: float
+
     n_elements: int = 20
-    n_snakes: int = 4
     length: float = 0.35
     radius_ratio: float = 0.011
     density: float = 1000.0
@@ -52,7 +63,6 @@ class SnakePitParameters:
     gravitational_acc: float = -0.1
     damping_rate: float = 1.0e-4
     time_step: float = 5.0e-5
-    final_time: float = 20.0
     activation_start_time_nd: float = 5.0
     packing_initial_vertical_span_ratio: float = 1.0
     packing_initial_radial_span_ratio: float = 1.0
@@ -64,179 +74,48 @@ class SnakePitParameters:
         return self.radius_ratio * self.length
 
     def pit_walls(self) -> tuple[np.ndarray, np.ndarray]:
-        origins = [[0.0, 0.0, 0.0]]
-        normals = [[0.0, 0.0, 1.0]]
+        """Return floor and side-wall ``(origins, inward_normals)`` half-spaces."""
         half = 0.5 * self.wall_distance_ratio * self.length
-        origins += [
-            [-half, 0.0, 0.0],
-            [half, 0.0, 0.0],
-            [0.0, -half, 0.0],
-            [0.0, half, 0.0],
-        ]
-        normals += [
-            [1.0, 0.0, 0.0],
-            [-1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, -1.0, 0.0],
-        ]
-        return np.asarray(origins), np.asarray(normals)
+        origins = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [-half, 0.0, 0.0],
+                [half, 0.0, 0.0],
+                [0.0, -half, 0.0],
+                [0.0, half, 0.0],
+            ]
+        )
+        normals = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0],
+            ]
+        )
+        return origins, normals
+
+    @classmethod
+    def smoke(cls) -> SnakePitParameters:
+        """Return a downscaled copy for a fast smoke test of the full stack."""
+        return cls(n_snakes=4, final_time=0.5)
 
 
-def build_simulator(
+def run_simulation(
     parameters: SnakePitParameters,
     *,
-    devices: Sequence[jax.Device],
-    seed: int,
-    block_checkpoint: Path,
-):
-    wall_origins, wall_normals = parameters.pit_walls()
-
-    simulator = SnakePitSimulator()
-    rod_block_cls = eaj.configure_rod_block_sharded(
-        devices=devices,
-        block_checkpoint=block_checkpoint,
-    )
-    simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
-
-    for start, direction in instantiate_rods_in_cylinder(parameters, seed):
-        # Calculate unit-normal vector
-        normal_seed = np.array([0.0, 0.0, 1.0])
-        if abs(np.dot(normal_seed, direction)) > 0.9:
-            normal_seed = np.array([0.0, 1.0, 0.0])
-        normal = normal_seed - np.dot(normal_seed, direction) * direction
-        normal /= np.linalg.norm(normal)
-        # Define rod
-        rod = ea.CosseratRod.straight_rod(
-            parameters.n_elements,
-            start,
-            direction,
-            normal,
-            parameters.length,
-            parameters.radius,
-            parameters.density,
-            youngs_modulus=parameters.youngs_modulus,
-            # shear modulus is not used in the simulation, and it is
-            # slightly controversial, so avoid explicit setting for now.
-            # shear_modulus=parameters.youngs_modulus / 1.5,
-        )
-        simulator.append(rod)
-
-    # Define forcing (active actuation)
-    spline_amplitude = spline_actuation_amplitude(parameters.n_elements)
-    simulator.operate_block(rod_block_cls).using(
-        ActiveMatterForcingJax,
-        parameters=parameters,
-        n_snakes=parameters.n_snakes,
-        n_elements=parameters.n_elements,
-        gravity_axis=np.array([0.0, 0.0, 1.0]),
-        spline_amplitude=spline_amplitude,
-        ramp="sinusoidal",
-    )
-
-    # Rod-to-rod contact
-    simulator.operate_block(rod_block_cls).using(
-        eaj.CapsuleContactOp,
-        n_elements_per_rod=parameters.n_elements,
-        contact_stiffness=parameters.contact_stiffness,
-        contact_damping=parameters.contact_damping,
-        steps_between_detection=parameters.steps_between_detection,
-        time_step=parameters.time_step,
-    )
-    simulator.operate_block(rod_block_cls).using(
-        eaj.WallContactOp,
-        n_elements_per_rod=parameters.n_elements,
-        wall_origins=wall_origins,
-        wall_normals=wall_normals,
-        contact_stiffness=parameters.contact_stiffness,
-        contact_damping=parameters.contact_damping,
-    )
-    simulator.operate_block(rod_block_cls).using(
-        eaj.AnalyticalLinearDamperJax,
-        damping_constant=parameters.damping_rate,
-        time_step=parameters.time_step,
-    )
-    simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    metadata = eaj.build_block_capsule_metadata(
-        block, n_elements_per_rod=parameters.n_elements
-    )
-    eaj.install_capsule_contact_state(
-        block,
-        metadata,
-        device=execution_mesh.devices[0],
-        dtype=block.device_dtype,
-    )
-    return simulator, block
-
-
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option(
-    "--backend",
-    type=click.Choice(("cpu", "cuda"), case_sensitive=False),
-    default="cpu",
-    show_default=True,
-)
-@click.option(
-    "--mesh",
-    type=click.Choice(("unified", "auto"), case_sensitive=False),
-    default="auto",
-    show_default=True,
-    help=(
-        "Execution mesh: unified keeps one shard; auto uses one shard per "
-        "local device when multiple are available."
-    ),
-)
-@click.option("--n-elements", type=int, default=20, show_default=True)
-@click.option("--n-snakes", type=int, default=4, show_default=True)
-@click.option("--final-time", type=float, default=20.0, show_default=True)
-@click.option("--time-step", type=float, default=5.0e-5, show_default=True)
-@click.option("--seed", default=2026, show_default=True)
-@click.option(
-    "--run-name",
-    default=None,
-    help='Output directory suffix: writes to "output" or "output_<run-name>".',
-)
-@click.option(
-    "--fps",
-    default=25,
-    show_default=True,
-    help="Frame capture rate for HDF5 output.",
-)
-@click.option(
-    "--save-workers",
-    default=4,
-    show_default=True,
-    help="Worker processes for parallel HDF5 rod-chunk writes.",
-)
-@click.option(
-    "--block-checkpoint",
-    type=click.Path(path_type=Path, dir_okay=False),
-    default="block_checkpoint.h5",
-    show_default=True,
-    help=(
-        "HDF5 block state path: load when the file exists, otherwise pack rods "
-        "and save after construction."
-    ),
-)
-def main(
     backend: str,
     mesh: str,
-    n_elements: int,
-    n_snakes: int,
-    final_time: float,
-    time_step: float,
     seed: int,
     run_name: str | None,
     fps: float,
     save_workers: int,
     block_checkpoint: Path,
-) -> None:
-    parameters = SnakePitParameters(
-        n_elements=n_elements,
-        n_snakes=n_snakes,
-        final_time=final_time,
-        time_step=time_step,
-    )
+) -> Path:
+    """Build the simulator, roll it out, and stream HDF5 frames to ``data/``."""
+    output_dir = _EXAMPLE_DIR / ("data" if run_name is None else f"data_{run_name}")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     devices = eaj.execution_mesh_for_block_checkpoint(
         block_checkpoint,
@@ -244,16 +123,13 @@ def main(
         backend=backend,
         n_rods=parameters.n_snakes,
     )
-    simulator, block = build_simulator(
+    simulator, block = build_simulation(
         parameters,
         devices=devices,
         seed=seed,
         block_checkpoint=block_checkpoint,
     )
     wall_origins, wall_normals = parameters.pit_walls()
-    output_dir = resolve_output_dir(run_name)
-
-    steps = int(round(parameters.final_time / parameters.time_step))
 
     frame_dt = 1.0 / fps
     steps_per_frame = int(round(frame_dt / parameters.time_step))
@@ -275,7 +151,7 @@ def main(
     stepper = eaj.PositionVerletJAX()
     start = time.perf_counter()
     current_time = 0.0
-    for frame_idx in tqdm(range(n_frames)):
+    for frame_idx in tqdm(range(n_frames), desc="Snake-pit rollout"):
         jax.block_until_ready(block.position_collection_device)
         stacked_positions = extract_stacked_positions(
             block, n_snakes=parameters.n_snakes
@@ -301,20 +177,104 @@ def main(
 
     elapsed = time.perf_counter() - start
     positions = np.asarray(block.position_collection_device)
-    print(f"case=snake-pit steps={steps}")
     print(
-        f"frames={n_frames} fps={fps} steps_per_frame={steps_per_frame} frame_dt={frame_dt:.6e}"
+        f"case=snake-pit steps={int(round(parameters.final_time / parameters.time_step))}"
+    )
+    print(
+        f"frames={n_frames} fps={fps} steps_per_frame={steps_per_frame} "
+        f"frame_dt={frame_dt:.6e}"
     )
     print(f"saved_frames={output_dir}")
     print(f"elapsed={elapsed:.6f}s finite={np.isfinite(positions).all()}")
     print(
-        "backend={backend} mesh={mesh} shards={shards} dtype={dtype}".format(
-            backend=backend,
-            mesh=mesh,
-            shards=block.n_shards,
-            dtype=block.device_dtype,
-        )
+        f"backend={backend} mesh={mesh} shards={getattr(block, 'n_shards', 1)} "
+        f"dtype={block.device_dtype}"
     )
+    return output_dir
+
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("-N", "--n-snakes", type=int, default=4, show_default=True)
+@click.option("-T", "--final-time", type=float, default=20.0, show_default=True)
+@click.option("--gpu", is_flag=True, help="Run on the CUDA backend (default CPU).")
+@click.option(
+    "--smoke", is_flag=True, help="Downscaled fast run exercising all features."
+)
+@click.option("--render", is_flag=True, help="Render frames and mp4 after the run.")
+@click.option(
+    "--mesh",
+    type=click.Choice(("unified", "auto"), case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help=(
+        "Execution mesh: unified keeps one shard; auto uses one shard per "
+        "local device when multiple are available."
+    ),
+)
+@click.option("--seed", default=2026, show_default=True)
+@click.option(
+    "--run-name",
+    default=None,
+    help='Output suffix: writes to "data" or "data_<run-name>".',
+)
+@click.option(
+    "--fps", default=25, show_default=True, help="Frame capture rate for HDF5 output."
+)
+@click.option(
+    "--save-workers",
+    default=4,
+    show_default=True,
+    help="Worker processes for parallel HDF5 rod-chunk writes.",
+)
+@click.option(
+    "--block-checkpoint",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help=(
+        "HDF5 block state path: load when the file exists, otherwise pack rods "
+        "and save after construction. Defaults to <data-dir>/block_checkpoint.h5."
+    ),
+)
+def main(
+    n_snakes: int,
+    final_time: float,
+    gpu: bool,
+    smoke: bool,
+    render: bool,
+    mesh: str,
+    seed: int,
+    run_name: str | None,
+    fps: float,
+    save_workers: int,
+    block_checkpoint: Path | None,
+) -> None:
+    """Build, integrate, and stream the JAX snake-pit case to ``data/``."""
+    parameters = (
+        SnakePitParameters.smoke()
+        if smoke
+        else SnakePitParameters(n_snakes=n_snakes, final_time=final_time)
+    )
+    backend = "cuda" if gpu else "cpu"
+    if block_checkpoint is None:
+        data_root = _EXAMPLE_DIR / ("data" if run_name is None else f"data_{run_name}")
+        block_checkpoint = data_root / "block_checkpoint.h5"
+    block_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+
+    run_simulation(
+        parameters,
+        backend=backend,
+        mesh=mesh,
+        seed=seed,
+        run_name=run_name,
+        fps=fps,
+        save_workers=save_workers,
+        block_checkpoint=block_checkpoint,
+    )
+
+    if render:
+        from post_processing import render_all
+
+        render_all(run_name=run_name, dpi=150, skip_ffmpeg=False)
 
 
 if __name__ == "__main__":
