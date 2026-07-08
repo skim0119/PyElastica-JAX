@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Literal, Sequence
+from typing import Callable, Iterable, Iterator, Literal, Sequence
 
 import numpy as np
 
@@ -1053,6 +1053,48 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
 
     def jax_get_state(self) -> dict[str, jax.Array]:
         return dict(self._device_state)
+
+    def _rod_view_metadata(self, rod_idx: int) -> JAXRodViewMetadata:
+        """Return the node/element/voronoi slices for one rod in the block."""
+        return JAXRodViewMetadata(
+            block_state_idx=rod_idx,
+            node_slice=slice(
+                int(self.start_idx_in_rod_nodes[rod_idx]),
+                int(self.end_idx_in_rod_nodes[rod_idx]),
+            ),
+            element_slice=slice(
+                int(self.start_idx_in_rod_elems[rod_idx]),
+                int(self.end_idx_in_rod_elems[rod_idx]),
+            ),
+            voronoi_slice=slice(
+                int(self.start_idx_in_rod_voronoi[rod_idx]),
+                int(self.end_idx_in_rod_voronoi[rod_idx]),
+            ),
+        )
+
+    def iterate_rods(self) -> Iterator[JAXRodView]:
+        """Yield a rod-local view of each rod's current device state.
+
+        Each :class:`JAXRodView` exposes the standard rod collections
+        (``position_collection``, ``velocity_collection``, ``mass``, ...)
+        already sliced to a single rod, reading directly from the block's
+        device state. This is the intended way to collect per-rod data after
+        :meth:`integrate`; wrap an attribute in ``numpy.asarray`` to pull it to
+        the host. Writes through a view are not committed back to the block.
+
+        Yields
+        ------
+        JAXRodView
+            One rod-local view per rod, in block order.
+
+        Examples
+        --------
+        >>> for rod in block.iterate_rods():
+        ...     positions = np.asarray(rod.position_collection)
+        """
+        state = self._device_state
+        for rod_idx in range(self.n_rods):
+            yield JAXRodView(state, self._rod_view_metadata(rod_idx))
 
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)

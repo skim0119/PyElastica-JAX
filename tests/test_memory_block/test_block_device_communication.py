@@ -135,6 +135,44 @@ def test_from_device_unknown_rod_raises_value_error():
         block.from_device(other_rod, variables=("position_collection",))
 
 
+def test_iterate_rods_yields_each_rod_slice():
+    rods = [_build_rod(n_elements=8), _build_rod(n_elements=10)]
+    _, block = _build_simulator_with_block(rods)
+
+    views = list(block.iterate_rods())
+    assert len(views) == len(rods)
+
+    for view, rod in zip(views, rods, strict=True):
+        positions = np.asarray(view.position_collection)
+        assert positions.shape == rod.position_collection.shape
+        np.testing.assert_allclose(positions, rod.position_collection)
+
+        masses = np.asarray(view.mass)
+        assert masses.shape == rod.mass.shape
+        np.testing.assert_allclose(masses, rod.mass)
+
+
+def test_iterate_rods_reflects_integrated_device_state():
+    rods = [_build_rod(n_elements=8), _build_rod(n_elements=10)]
+    for rod in rods:
+        rod.external_forces[1, :] = 25.0
+    initial_positions = [rod.position_collection.copy() for rod in rods]
+    simulator, block = _build_simulator_with_block(rods)
+
+    stepper = eaj.PositionVerletJAX()
+    stepper.integrate(simulator, time=0.0, final_time=0.005, dt=0.001)
+
+    view_positions = [
+        np.asarray(view.position_collection) for view in block.iterate_rods()
+    ]
+    for positions, start in zip(view_positions, initial_positions, strict=True):
+        assert not np.allclose(positions, start)
+
+    block.from_device(variables=("position_collection",))
+    for positions, rod in zip(view_positions, rods, strict=True):
+        np.testing.assert_allclose(positions, rod.position_collection)
+
+
 def test_rod_block_is_pytree_compatible():
     rod = _build_rod()
     simulator, block = _build_simulator_with_block([rod])
