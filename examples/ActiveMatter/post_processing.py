@@ -80,9 +80,9 @@ def render_all(
         frame_idx = int(frame_path.stem.split("_")[-1])
         out_png = frame_png_dir / f"frame_{frame_idx:06d}.png"
         render_frame_png(frame_path, out_png, metadata=metadata, dpi=dpi)
-        if total_frames > 0 and run_index % max(1, total_frames // 50) == 0:
-            percent = 100.0 * (run_index + 1) / total_frames
-            print(f"rank={rank} wrote {out_png} ({percent:.1f}%)", flush=True)
+        # if total_frames > 0 and run_index % max(1, total_frames // 50) == 0:
+        #     percent = 100.0 * (run_index + 1) / total_frames
+        #     print(f"rank={rank} wrote {out_png} ({percent:.1f}%)", flush=True)
 
     comm.Barrier()
 
