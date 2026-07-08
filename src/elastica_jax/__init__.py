@@ -19,6 +19,7 @@ from elastica_jax.operations import (
     NoOpsJax,
     OneEndFixedJax,
     EndpointForcesJax,
+    GravityForcesJax,
     AnalyticalLinearDamperJax,
     GravityAnalyticalDamperJax,
 )

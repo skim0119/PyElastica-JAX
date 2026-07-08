@@ -126,6 +126,38 @@ class EndpointForcesJax(NoOpsJax):
         return rod_view
 
 
+class GravityForcesJax(NoOpsJax):
+    """Apply a uniform gravitational body force to every rod node.
+
+    Parameters
+    ----------
+    acc_gravity : numpy.ndarray | None, optional
+        Gravitational acceleration vector. Defaults to Earth gravity
+        (``9.80665 m/s^2``) along ``-y``.
+    """
+
+    def __init__(
+        self,
+        *,
+        acc_gravity: JAXVectorArray | None = None,
+        _system: object = None,
+    ) -> None:
+        if acc_gravity is None:
+            acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
+        self.acc_gravity: JAXVectorArray = np.asarray(acc_gravity, dtype=np.float64)
+
+    def jax_operate_synchronize(
+        self,
+        rod_view: JAXRodView,
+        time: JAXTime,
+    ) -> JAXRodView:
+        rod_view.external_forces = (
+            rod_view.external_forces
+            + self.acc_gravity[:, None] * rod_view.mass[None, :]
+        )
+        return rod_view
+
+
 class AnalyticalLinearDamperJax(NoOpsJax):
     """JAX equivalent of AnalyticalLinearDamper."""
 
