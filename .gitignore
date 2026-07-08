@@ -7,6 +7,10 @@ __pycache__/
 *.so
 
 output*
+examples/*/data/
+examples/*/data_*/
+examples/*/render/
+examples/*/render_*/
 *.swp
 *.h5
 *.hdf5
