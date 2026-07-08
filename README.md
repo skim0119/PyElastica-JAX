@@ -5,7 +5,7 @@
 JAX integration to [`PyElastica`](https://github.com/GazzolaLab/PyElastica) framework for simulating assemblies of Cosserat Rods.
 This framework extension supports more directly handling of the `block` concept.
 
-The goal is to scale. If your problem is on order of 100~ elements, this framework might not give any speed-up, but you are welcome to still explore the features.
+The goal is to scale. If your problem is below an order of 100~ elements, this framework might not give any speed-up, but you are welcome to still explore the features.
 
 > Currently under development. All features are experimental, and interface are subject to change without detailed discussion. Please leave issues if you have any suggestions or recommendations.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
