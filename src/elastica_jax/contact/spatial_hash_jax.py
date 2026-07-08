@@ -271,3 +271,58 @@ def rebuild_spatial_hash_pairs_jax(
     )
     valid = valid & cross_rod & overlap
     return _compact_pair_buffer(first, second, valid, max_pairs=max_pairs)
+
+
+def rebuild_all_pairs_jax(
+    *,
+    centers: jax.Array,
+    rod_ids: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    max_pairs: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Rebuild a bounded cross-rod pair list by all-pairs AABB testing on device.
+
+    This mirrors PyElastica's non-hashed rod-rod rung: every unordered element
+    pair from distinct rods is considered and kept only if AABBs overlap.
+
+    Parameters
+    ----------
+    centers, rod_ids, axes, lengths, radii
+        Per-capsule geometry aligned on the leading axis ``N``.
+    max_pairs : int
+        Fixed-size output buffer capacity.
+
+    Returns
+    -------
+    pair_first, pair_second, pair_count
+        Fixed buffers and the number of active entries.
+    """
+    n = centers.shape[0]
+    empty_first = jnp.full(max_pairs, -1, dtype=jnp.int32)
+    empty_second = jnp.full(max_pairs, -1, dtype=jnp.int32)
+    empty_count = jnp.asarray(0, dtype=jnp.int32)
+    if n < 2:
+        return empty_first, empty_second, empty_count
+
+    first_grid, second_grid = jnp.triu_indices(n, k=1)
+    cross_rod = rod_ids[first_grid] != rod_ids[second_grid]
+    half_lengths = 0.5 * lengths
+    overlap = capsule_aabb_overlap(
+        centers[first_grid],
+        axes[first_grid],
+        half_lengths[first_grid],
+        radii[first_grid],
+        centers[second_grid],
+        axes[second_grid],
+        half_lengths[second_grid],
+        radii[second_grid],
+    )
+    valid = cross_rod & overlap
+    return _compact_pair_buffer(
+        first_grid.astype(jnp.int32),
+        second_grid.astype(jnp.int32),
+        valid,
+        max_pairs=max_pairs,
+    )

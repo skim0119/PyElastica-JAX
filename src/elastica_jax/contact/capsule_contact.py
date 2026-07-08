@@ -13,10 +13,15 @@ from elastica_jax.block_operation import CommunicationScope, NoBlockOpJax
 from elastica_jax.contact.kernels import apply_capsule_pair_forces, apply_wall_contacts
 from elastica_jax.contact.spatial_hash import (
     default_cell_size,
+    estimate_all_cross_rod_pairs,
     estimate_max_pairs,
+    rebuild_all_pairs,
     rebuild_spatial_hash_pairs,
 )
-from elastica_jax.contact.spatial_hash_jax import rebuild_spatial_hash_pairs_jax
+from elastica_jax.contact.spatial_hash_jax import (
+    rebuild_all_pairs_jax,
+    rebuild_spatial_hash_pairs_jax,
+)
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
@@ -55,6 +60,7 @@ class BlockCapsuleMetadata:
     max_pairs: int
     cell_size: float
     max_neighbors_per_capsule: int = 64
+    broad_phase: str = "spatial_hash"
 
     @property
     def n_capsules(self) -> int:
@@ -67,7 +73,12 @@ def build_block_capsule_metadata(
     n_elements_per_rod: int,
     cell_size: float | None = None,
     max_neighbors_per_capsule: int = 64,
+    broad_phase: str = "spatial_hash",
 ) -> BlockCapsuleMetadata:
+    assert broad_phase in {"spatial_hash", "all_pairs"}, (
+        f"Unsupported broad_phase {broad_phase!r}; "
+        "expected 'spatial_hash' or 'all_pairs'."
+    )
     widths = block.end_idx_in_rod_elems - block.start_idx_in_rod_elems
     assert np.all(
         widths == widths[0]
@@ -87,9 +98,12 @@ def build_block_capsule_metadata(
     rod_ids = np.repeat(np.arange(n_rods, dtype=np.int32), n_elements_per_rod)
     block_element_indices = element_indices.reshape(-1)
     n_capsules = rod_ids.size
-    max_pairs = estimate_max_pairs(
-        n_capsules, max_neighbors_per_capsule=max_neighbors_per_capsule
-    )
+    if broad_phase == "all_pairs":
+        max_pairs = max(1, estimate_all_cross_rod_pairs(rod_ids))
+    else:
+        max_pairs = estimate_max_pairs(
+            n_capsules, max_neighbors_per_capsule=max_neighbors_per_capsule
+        )
     if cell_size is None:
         cell_size = default_cell_size(
             radii=np.asarray(block.radius[block_element_indices]),
@@ -105,6 +119,7 @@ def build_block_capsule_metadata(
         max_pairs=max_pairs,
         cell_size=float(cell_size),
         max_neighbors_per_capsule=max_neighbors_per_capsule,
+        broad_phase=broad_phase,
     )
 
 
@@ -164,7 +179,7 @@ def rebuild_contact_pairs_jax(
     max_pairs: int,
     max_cell_occ: int,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Rebuild bounded pair buffers inside a traced JAX graph."""
+    """Rebuild bounded pair buffers via on-device spatial hash."""
     return rebuild_spatial_hash_pairs_jax(
         centers=centers,
         rod_ids=rod_ids,
@@ -174,6 +189,26 @@ def rebuild_contact_pairs_jax(
         cell_size=cell_size,
         max_pairs=max_pairs,
         max_cell_occ=max_cell_occ,
+    )
+
+
+def rebuild_contact_pairs_all_pairs_jax(
+    *,
+    centers: jax.Array,
+    rod_ids: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    max_pairs: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Rebuild bounded pair buffers via on-device all-pairs AABB testing."""
+    return rebuild_all_pairs_jax(
+        centers=centers,
+        rod_ids=rod_ids,
+        axes=axes,
+        lengths=lengths,
+        radii=radii,
+        max_pairs=max_pairs,
     )
 
 
@@ -198,6 +233,25 @@ def _rebuild_pairs_numpy(
     return buffer.pair_first, buffer.pair_second, np.int32(buffer.pair_count)
 
 
+def _rebuild_all_pairs_numpy(
+    centers,
+    rod_ids,
+    axes,
+    lengths,
+    radii,
+    max_pairs,
+) -> tuple[np.ndarray, np.ndarray, np.int32]:
+    buffer = rebuild_all_pairs(
+        centers=np.asarray(centers),
+        rod_ids=np.asarray(rod_ids),
+        axes=np.asarray(axes),
+        lengths=np.asarray(lengths),
+        radii=np.asarray(radii),
+        max_pairs=int(max_pairs),
+    )
+    return buffer.pair_first, buffer.pair_second, np.int32(buffer.pair_count)
+
+
 def rebuild_contact_pairs_host_jax(
     *,
     centers: jax.Array,
@@ -208,7 +262,7 @@ def rebuild_contact_pairs_host_jax(
     cell_size: float,
     max_pairs: int,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Rebuild bounded pair buffers via host callback (CPU-optimized path)."""
+    """Rebuild bounded pair buffers via host spatial-hash callback."""
     result_shape = (
         jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
         jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
@@ -223,6 +277,35 @@ def rebuild_contact_pairs_host_jax(
         lengths,
         radii,
         cell_size,
+        max_pairs,
+        vmap_method="sequential",
+    )
+    return pair_first, pair_second, pair_count
+
+
+def rebuild_contact_pairs_all_pairs_host_jax(
+    *,
+    centers: jax.Array,
+    rod_ids: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    max_pairs: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Rebuild bounded pair buffers via host all-pairs AABB callback."""
+    result_shape = (
+        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
+        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
+        jax.ShapeDtypeStruct((), jnp.int32),
+    )
+    pair_first, pair_second, pair_count = jax.pure_callback(
+        _rebuild_all_pairs_numpy,
+        result_shape,
+        centers,
+        rod_ids,
+        axes,
+        lengths,
+        radii,
         max_pairs,
         vmap_method="sequential",
     )
@@ -300,6 +383,24 @@ def _apply_capsule_contact_unified(
     pair_count = state[CONTACT_STATE_PAIR_COUNT]
 
     def _rebuild(_):
+        if op.metadata.broad_phase == "all_pairs":
+            if op._use_device_spatial_hash:
+                return rebuild_contact_pairs_all_pairs_jax(
+                    centers=kinematics["centers"],
+                    rod_ids=op._rod_ids,
+                    axes=kinematics["axes"],
+                    lengths=kinematics["lengths"],
+                    radii=kinematics["radii"],
+                    max_pairs=op.metadata.max_pairs,
+                )
+            return rebuild_contact_pairs_all_pairs_host_jax(
+                centers=kinematics["centers"],
+                rod_ids=op._rod_ids,
+                axes=kinematics["axes"],
+                lengths=kinematics["lengths"],
+                radii=kinematics["radii"],
+                max_pairs=op.metadata.max_pairs,
+            )
         if op._use_device_spatial_hash:
             return rebuild_contact_pairs_jax(
                 centers=kinematics["centers"],
@@ -394,7 +495,12 @@ def _apply_capsule_contact_unified(
 
 
 class CapsuleContactOp(NoBlockOpJax):
-    """Spatial-hash capsule-capsule contact for packed Cosserat rod blocks.
+    """Capsule-capsule contact for packed Cosserat rod blocks.
+
+    Broad-phase candidates are collected by either a spatial hash
+    (``broad_phase="spatial_hash"``, default) or by all-pairs AABB testing
+    (``broad_phase="all_pairs"``), which mirrors PyElastica's non-hashed
+    rod-rod contact registration style.
 
     By default the contact is the linear normal-spring/damper law. Optional
     arguments enable a Hertzian ``gamma^1.5`` normal law (``hertzian=True``), a
@@ -417,6 +523,7 @@ class CapsuleContactOp(NoBlockOpJax):
         steps_between_detection: int = 0,
         time_step: float,
         max_neighbors_per_capsule: int = 64,
+        broad_phase: str = "spatial_hash",
         hertzian: bool = False,
         contact_stiffness_initial: float | None = None,
         contact_damping_initial: float | None = None,
@@ -429,6 +536,10 @@ class CapsuleContactOp(NoBlockOpJax):
         assert (
             _system is not None
         ), "CapsuleContactOp requires a finalized block system."
+        assert broad_phase in {"spatial_hash", "all_pairs"}, (
+            f"Unsupported broad_phase {broad_phase!r}; "
+            "expected 'spatial_hash' or 'all_pairs'."
+        )
         if metadata is None:
             assert (
                 n_elements_per_rod is not None
@@ -437,6 +548,12 @@ class CapsuleContactOp(NoBlockOpJax):
                 _system,
                 n_elements_per_rod=n_elements_per_rod,
                 max_neighbors_per_capsule=max_neighbors_per_capsule,
+                broad_phase=broad_phase,
+            )
+        else:
+            assert metadata.broad_phase == broad_phase, (
+                "Provided metadata.broad_phase does not match CapsuleContactOp "
+                f"broad_phase={broad_phase!r}."
             )
         self._block = _system
         self.metadata = metadata
