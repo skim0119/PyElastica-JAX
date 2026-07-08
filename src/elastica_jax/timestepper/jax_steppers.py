@@ -237,21 +237,21 @@ class PositionVerletJAX:
         simulation_time: np.float64,
         simulation_dt: np.float64,
     ) -> tuple[jax.Array, tuple[JAXPyTree, ...]]:
-        assert len(executions) == len(systems), (
-            "Independent block execution metadata must match finalized systems."
-        )
+        assert len(executions) == len(
+            systems
+        ), "Independent block execution metadata must match finalized systems."
         final_times: list[jax.Array] = []
         final_states: list[JAXPyTree] = []
 
         for system, state, execution in zip(systems, states, executions, strict=True):
             if execution.shard_stages is not None:
-                assert isinstance(system, _ShardedCosseratRodBlock), (
-                    "Shard execution stages require a sharded block."
-                )
+                assert isinstance(
+                    system, _ShardedCosseratRodBlock
+                ), "Shard execution stages require a sharded block."
                 shard_states = state["shards"]
-                assert len(execution.shard_stages) == len(shard_states), (
-                    "Shard execution metadata must match block state shards."
-                )
+                assert len(execution.shard_stages) == len(
+                    shard_states
+                ), "Shard execution metadata must match block state shards."
                 updated_shards = []
                 for shard_system, shard_state, shard_stages in zip(
                     system._shard_blocks,
@@ -390,9 +390,9 @@ class PositionVerletJAX:
         simulation_dt = np.float64(dt)
         duration = float(target_time - simulation_time)
         n_steps = int(np.round(duration / float(simulation_dt)))
-        assert np.isclose(simulation_time + n_steps * simulation_dt, target_time), (
-            "final_time - time must be an integer multiple of dt."
-        )
+        assert np.isclose(
+            simulation_time + n_steps * simulation_dt, target_time
+        ), "final_time - time must be an integer multiple of dt."
 
         systems = tuple(SystemCollection.final_systems())
         assert systems, "SystemCollection must contain at least one JAX block."

@@ -25,9 +25,9 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
         _system,
     ) -> None:
         widths = _system.end_idx_in_rod_elems - _system.start_idx_in_rod_elems
-        assert np.all(widths == widths[0]), (
-            "SnakeMuscleTorquesBlockJax requires uniform element counts across rods."
-        )
+        assert np.all(
+            widths == widths[0]
+        ), "SnakeMuscleTorquesBlockJax requires uniform element counts across rods."
         template = ea.MuscleTorques(
             base_length=base_length,
             b_coeff=b_coeff[:-1],
@@ -293,9 +293,8 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         unitized_total_velocity = (
             slip_velocity_along_rolling_direction + velocity_along_axial_direction
         )
-        unitized_total_velocity = (
-            unitized_total_velocity
-            / (jnp.linalg.norm(unitized_total_velocity + 1.0e-14, axis=1)[:, None, :])
+        unitized_total_velocity = unitized_total_velocity / (
+            jnp.linalg.norm(unitized_total_velocity + 1.0e-14, axis=1)[:, None, :]
         )
         kinetic_friction_force_along_axial_direction = (
             -(1.0 - slip_function_along_axial_direction)[:, None, :]

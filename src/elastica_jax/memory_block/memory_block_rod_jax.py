@@ -865,9 +865,9 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
                 raise KeyError(variable)
 
     def _normalize_rod_sync_target(self, rods: RodSyncTarget) -> tuple[RodType, ...]:
-        assert hasattr(self, "_systems"), (
-            "Block must be built before synchronizing with rods."
-        )
+        assert hasattr(
+            self, "_systems"
+        ), "Block must be built before synchronizing with rods."
         if rods == "all":
             return self._systems
         if isinstance(rods, (list, tuple)):

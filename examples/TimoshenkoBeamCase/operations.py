@@ -55,11 +55,10 @@ def build_simulator(
     parameters: TimoshenkoParameters,
     *,
     backend: str,
-    dtype: np.dtype,
 ) -> tuple[TimoshenkoSimulator, eaj._CosseratRodMemoryBlock, ea.CosseratRod]:
     """Build and finalize the Timoshenko beam simulator."""
     simulator = TimoshenkoSimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend, device_dtype=dtype)
+    rod_block_cls = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 
     rod = ea.CosseratRod.straight_rod(
@@ -115,9 +114,7 @@ def analytical_shearable_deflection(
     acting_force = float(np.abs(end_force[np.nonzero(end_force)][0]))
 
     linear_prefactor = -acting_force / rod.shear_matrix[0, 0, 0]
-    quadratic_prefactor = (
-        -acting_force * base_length / 2.0 / rod.bend_matrix[0, 0, 0]
-    )
+    quadratic_prefactor = -acting_force * base_length / 2.0 / rod.bend_matrix[0, 0, 0]
     cubic_prefactor = acting_force / 6.0 / rod.bend_matrix[0, 0, 0]
     deflection = s * (
         linear_prefactor + s * (quadratic_prefactor + s * cubic_prefactor)

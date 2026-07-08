@@ -46,16 +46,16 @@ def apply_gravity_and_actuation(
     ramp: str,
 ):
     """Apply nodal gravity and traveling-wave torque actuation to block state."""
-    dtype = state["position_collection"].dtype
-    gravity = parameters.gravitational_acc * jnp.asarray(gravity_axis, dtype=dtype)
+    gravity = parameters.gravitational_acc * gravity_axis
     external_forces = state["mass"][None, :] * gravity[:, None]
     external_torques = jnp.zeros_like(state["external_torques"])
 
-    elem = jnp.asarray(element_indices)
-    directors = jnp.moveaxis(state["director_collection"][:, :, elem.reshape(-1)], 2, 0)
+    directors = jnp.moveaxis(
+        state["director_collection"][:, :, element_indices.reshape(-1)], 2, 0
+    )
     directors = directors.reshape(n_snakes, n_elements, 3, 3)
 
-    s = jnp.arange(n_elements, dtype=dtype) + 0.5
+    s = jnp.arange(n_elements) + 0.5
     s /= n_elements
     wave = jnp.sin(
         2.0 * jnp.pi * time / parameters.time_period
@@ -65,21 +65,14 @@ def apply_gravity_and_actuation(
         start = parameters.activation_start_time_nd * parameters.time_period
         phase = jnp.clip((time - start) / parameters.time_period, 0.0, 1.0)
         ramp_factor = 0.5 * (1.0 - jnp.cos(jnp.pi * phase))
-        torque_magnitude = (
-            0.5 * ramp_factor * jnp.asarray(spline_amplitude, dtype=dtype) * wave
-        )
+        torque_magnitude = 0.5 * ramp_factor * spline_amplitude * wave
     elif ramp == "linear":
         ramp_factor = jnp.minimum(1.0, time / parameters.time_period)
-        torque_magnitude = (
-            ramp_factor * jnp.asarray(spline_amplitude, dtype=dtype) * wave
-        )
+        torque_magnitude = ramp_factor * spline_amplitude * wave
     else:
         raise ValueError(f"Unsupported actuation ramp {ramp!r}.")
 
-    torque_world = (
-        torque_magnitude[None, None, :]
-        * jnp.asarray(gravity_axis, dtype=dtype)[None, :, None]
-    )
+    torque_world = torque_magnitude[None, None, :] * gravity_axis[None, :, None]
     torque_world = jnp.broadcast_to(torque_world, (n_snakes, 3, n_elements))
     torque_field = jnp.einsum("neij,nje->nei", directors, torque_world)
     torque_couple = jnp.zeros_like(torque_field)

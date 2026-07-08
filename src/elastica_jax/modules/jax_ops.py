@@ -179,9 +179,9 @@ class _JAXOp:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        assert issubclass(cls, NoOpsJax), (
-            f"{cls} is not a valid JAX operator. It must derive from NoOpsJax."
-        )
+        assert issubclass(
+            cls, NoOpsJax
+        ), f"{cls} is not a valid JAX operator. It must derive from NoOpsJax."
         self._op_cls = cls
         self._args = args
         self._kwargs = kwargs

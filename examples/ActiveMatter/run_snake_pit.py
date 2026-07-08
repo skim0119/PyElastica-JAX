@@ -86,7 +86,6 @@ def build_simulator(
     parameters: SnakePitParameters,
     *,
     devices: Sequence[jax.Device],
-    dtype: np.dtype,
     seed: int,
     block_checkpoint: Path,
 ):
@@ -95,7 +94,6 @@ def build_simulator(
     simulator = SnakePitSimulator()
     rod_block_cls = eaj.configure_rod_block_sharded(
         devices=devices,
-        device_dtype=dtype,
         block_checkpoint=block_checkpoint,
     )
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
@@ -166,7 +164,7 @@ def build_simulator(
         block,
         metadata,
         device=execution_mesh.devices[0],
-        dtype=dtype,
+        dtype=block.device_dtype,
     )
     return simulator, block
 
@@ -246,11 +244,9 @@ def main(
         backend=backend,
         n_rods=parameters.n_snakes,
     )
-    dtype = np.dtype(np.float64)
     simulator, block = build_simulator(
         parameters,
         devices=devices,
-        dtype=dtype,
         seed=seed,
         block_checkpoint=block_checkpoint,
     )
@@ -316,7 +312,7 @@ def main(
             backend=backend,
             mesh=mesh,
             shards=block.n_shards,
-            dtype=dtype,
+            dtype=block.device_dtype,
         )
     )
 

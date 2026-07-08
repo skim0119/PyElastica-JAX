@@ -96,11 +96,10 @@ def build_simulator(
     parameters: ButterflyParameters,
     *,
     backend: str,
-    dtype: np.dtype,
 ) -> tuple[ButterflySimulator, eaj._CosseratRodMemoryBlock, ea.CosseratRod]:
     """Build and finalize the butterfly simulator."""
     simulator = ButterflySimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend, device_dtype=dtype)
+    rod_block_cls = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
     rod = build_rod(parameters)
     simulator.append(rod)
