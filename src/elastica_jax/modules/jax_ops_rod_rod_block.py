@@ -93,9 +93,9 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
                 second_system=self[jax_op.second_id()],
             )
             method = getattr(op_instance, "jax_operation", None)
-            assert method is not None, (
-                f"{type(op_instance)} does not define `jax_operation`."
-            )
+            assert (
+                method is not None
+            ), f"{type(op_instance)} does not define `jax_operation`."
             if getattr(type(op_instance), "jax_operation") is getattr(
                 NoRodRodBlockOpJax, "jax_operation"
             ):

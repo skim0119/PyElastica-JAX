@@ -22,8 +22,6 @@ from __future__ import annotations
 import argparse
 import time
 
-pass
-
 import numpy as np
 
 import elastica as ea
@@ -45,15 +43,9 @@ from elastica_jax._rotations import (
     _jax_inv_rotate as _inv_rotate,
 )
 
-try:
-    import jax
-    from jax import config as jax_config
-    import jax.numpy as jnp
-except ModuleNotFoundError as exc:  # pragma: no cover - runtime-only guard
-    raise SystemExit(
-        "This example requires JAX. Install the optional GPU dependency first, "
-        'for example with `uv add --optional gpu "jax[cuda13]"`.'
-    ) from exc
+import jax
+from jax import config as jax_config
+import jax.numpy as jnp
 
 
 jax_config.update("jax_enable_x64", True)
@@ -98,21 +90,18 @@ class SnakeMuscleTorquesJax(eaj.NoOpsJax):
         self.muscle_ramp_up_time = np.float64(period)
 
     def jax_operate_synchronize(self, rod_view, time):
-        dtype = rod_view.position_collection.dtype
         external_forces, external_torques = self._apply_gravity_and_muscle_torques(
             time_value=time,
             director_collection=rod_view.director_collection,
             mass=rod_view.mass,
-            gravity=jnp.asarray(self.gravity, dtype=dtype),
-            muscle_direction=jnp.asarray(self.muscle_direction, dtype=dtype),
-            muscle_s=jnp.asarray(self.muscle_s, dtype=dtype),
-            muscle_spline=jnp.asarray(self.muscle_spline, dtype=dtype),
-            muscle_angular_frequency=jnp.asarray(
-                self.muscle_angular_frequency, dtype=dtype
-            ),
-            muscle_wave_number=jnp.asarray(self.muscle_wave_number, dtype=dtype),
-            muscle_phase_shift=jnp.asarray(self.muscle_phase_shift, dtype=dtype),
-            muscle_ramp_up_time=jnp.asarray(self.muscle_ramp_up_time, dtype=dtype),
+            gravity=self.gravity,
+            muscle_direction=self.muscle_direction,
+            muscle_s=self.muscle_s,
+            muscle_spline=self.muscle_spline,
+            muscle_angular_frequency=self.muscle_angular_frequency,
+            muscle_wave_number=self.muscle_wave_number,
+            muscle_phase_shift=self.muscle_phase_shift,
+            muscle_ramp_up_time=self.muscle_ramp_up_time,
         )
         rod_view.external_forces = external_forces
         rod_view.external_torques = external_torques
@@ -218,7 +207,6 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         static_mu_array: np.ndarray,
         _system,
     ) -> None:
-        del _system
         self.plane_origin = np.asarray(plane_origin, dtype=np.float64)
         self.plane_normal = np.asarray(plane_normal, dtype=np.float64)
         self.surface_tol = np.float64(1.0e-4)
@@ -233,17 +221,13 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         self.static_mu_sideways = np.float64(static_mu_array[2])
 
     def jax_operate_synchronize(self, rod_view, time):
-        del time
-        dtype = rod_view.position_collection.dtype
-        plane_origin = jnp.asarray(self.plane_origin, dtype=dtype)
-        plane_normal = jnp.asarray(self.plane_normal, dtype=dtype)
-        surface_tol = jnp.asarray(self.surface_tol, dtype=dtype)
-        slip_velocity_tol = jnp.asarray(self.slip_velocity_tol, dtype=dtype)
-        k = jnp.asarray(self.k, dtype=dtype)
-        nu = jnp.asarray(self.nu, dtype=dtype)
-        kinetic_mu_forward = jnp.asarray(self.kinetic_mu_forward, dtype=dtype)
-        kinetic_mu_backward = jnp.asarray(self.kinetic_mu_backward, dtype=dtype)
-        kinetic_mu_sideways = jnp.asarray(self.kinetic_mu_sideways, dtype=dtype)
+        plane_origin = self.plane_origin
+        plane_normal = self.plane_normal
+        surface_tol = self.surface_tol
+        slip_velocity_tol = self.slip_velocity_tol
+        k = self.k
+        nu = self.nu
+        kinetic_mu_sideways = self.kinetic_mu_sideways
 
         nodal_total_forces = rod_view.internal_forces + rod_view.external_forces
         element_total_forces = _node_to_element_mass_or_force_jax(nodal_total_forces)
@@ -318,7 +302,6 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
             self.kinetic_mu_forward * (1.0 + velocity_sign_along_axial_direction)
             + self.kinetic_mu_backward * (1.0 - velocity_sign_along_axial_direction)
         )
-        kinetic_mu = jnp.asarray(kinetic_mu, dtype=dtype)
         slip_function_along_axial_direction = _find_slipping_elements_jax(
             velocity_along_axial_direction, slip_velocity_tol
         )
@@ -355,8 +338,9 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         unitized_total_velocity = (
             slip_velocity_along_rolling_direction + velocity_along_axial_direction
         )
-        unitized_total_velocity = unitized_total_velocity / (
-            jnp.linalg.norm(unitized_total_velocity + 1.0e-14, axis=0)[None, :]
+        unitized_total_velocity = (
+            unitized_total_velocity
+            / (jnp.linalg.norm(unitized_total_velocity + 1.0e-14, axis=0)[None, :])
         )
         kinetic_friction_force_along_axial_direction = (
             -(
@@ -559,7 +543,6 @@ def build_jax_sim(
     b_coeff: np.ndarray,
     *,
     device: jax.Device,
-    device_dtype: np.dtype,
     n_elem: int = 50,
     period: float = 2.0,
     base_length: float = 0.35,
@@ -569,10 +552,7 @@ def build_jax_sim(
     gravitational_acc: float = -9.80665,
     time_step: float = 1.0e-4,
 ) -> tuple[SnakeJAXSimulator, eaj._CosseratRodMemoryBlock]:
-    rod_block = eaj.configure_rod_block(
-        device=device or "cpu",
-        device_dtype=np.dtype(device_dtype),
-    )
+    rod_block = eaj.configure_rod_block(device=device or "cpu")
 
     sim = SnakeJAXSimulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
@@ -767,7 +747,6 @@ def run_gpu_rollout_with_stepper(
     b_coeff: np.ndarray,
     *,
     device: jax.Device,
-    device_dtype: np.dtype,
     n_elem: int = 50,
     period: float = 2.0,
     final_time: float = 0.002,
@@ -777,7 +756,6 @@ def run_gpu_rollout_with_stepper(
     sim, block = build_jax_sim(
         b_coeff,
         device=device,
-        device_dtype=device_dtype,
         n_elem=n_elem,
         period=period,
         time_step=time_step,
@@ -840,12 +818,6 @@ def select_device(requested_backend: str) -> tuple[str, jax.Device]:
             f"Found: {sorted(platforms)}"
         )
     return requested_backend, platforms[requested_backend]
-
-
-def preferred_dtype(device: jax.Device) -> np.dtype:
-    if device.platform.lower() == "cpu":
-        return np.float64
-    return np.float32
 
 
 def max_abs_diff(first: np.ndarray, second: np.ndarray) -> float:
@@ -911,10 +883,8 @@ def main() -> None:
     total_steps = int(args.final_time / args.time_step)
 
     backend_name, device = select_device(args.backend)
-    dtype = preferred_dtype(device)
     print(f"Selected backend alias: {backend_name}")
     print(f"JAX device: {device} (platform={device.platform})")
-    print(f"JAX rollout dtype: {dtype}")
     print(f"Reduced snake rollout steps: {total_steps}")
 
     cpu_state, cpu_elapsed = run_cpu_reference(
@@ -928,7 +898,6 @@ def main() -> None:
     final_state_device, gpu_elapsed = run_gpu_rollout_with_stepper(
         b_coeff,
         device=device,
-        device_dtype=dtype,
         n_elem=args.n_elem,
         final_time=args.final_time,
         time_step=args.time_step,

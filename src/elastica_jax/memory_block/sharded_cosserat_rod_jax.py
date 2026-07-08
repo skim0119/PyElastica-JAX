@@ -100,12 +100,12 @@ class _ShardedCosseratRodBlock:
         # TODO: Padding could resolve this issue. Not sure if the padding
         # should be implemented within the block implementation, or leave
         # it a user responsibility.
-        assert len(systems) >= len(self._devices), (
-            "Number of rods must be at least the number of devices."
-        )
-        assert len(systems) % len(self._devices) == 0, (
-            "Number of rods must be divisible by number of devices."
-        )
+        assert len(systems) >= len(
+            self._devices
+        ), "Number of rods must be at least the number of devices."
+        assert (
+            len(systems) % len(self._devices) == 0
+        ), "Number of rods must be divisible by number of devices."
 
         from elastica_jax.checkpoint.block_checkpoint import (
             infer_n_elements_per_rod,
@@ -164,12 +164,12 @@ class _ShardedCosseratRodBlock:
         checkpoint_path = self.block_checkpoint_path
         if checkpoint_path is not None and checkpoint_path.is_file():
             layout = read_block_checkpoint_layout(checkpoint_path)
-            assert layout.n_rods == n_rods, (
-                "Block checkpoint rod count does not match appended rods."
-            )
-            assert layout.n_shards == n_shards, (
-                "Block checkpoint shard count does not match configured devices."
-            )
+            assert (
+                layout.n_rods == n_rods
+            ), "Block checkpoint rod count does not match appended rods."
+            assert (
+                layout.n_shards == n_shards
+            ), "Block checkpoint shard count does not match configured devices."
             if layout.rod_to_shard is not None:
                 self._rod_to_shard = np.asarray(layout.rod_to_shard, dtype=np.int32)
             else:
@@ -257,7 +257,9 @@ class _ShardedCosseratRodBlock:
         *,
         axis: int,
     ) -> jax.Array:
-        transferred = [jax.device_put(array, device=self._devices[0]) for array in arrays]
+        transferred = [
+            jax.device_put(array, device=self._devices[0]) for array in arrays
+        ]
         return jnp.concatenate(transferred, axis=axis)
 
     def _concatenate_rod_index_array(self, attr: str) -> np.ndarray:
@@ -280,9 +282,9 @@ class _ShardedCosseratRodBlock:
         return np.concatenate(chunks)
 
     def _normalize_rod_sync_target(self, rods: RodSyncTarget) -> tuple[RodType, ...]:
-        assert hasattr(self, "_systems"), (
-            "Block must be built before synchronizing with rods."
-        )
+        assert hasattr(
+            self, "_systems"
+        ), "Block must be built before synchronizing with rods."
         if rods == "all":
             return self._systems
         if isinstance(rods, (list, tuple)):
@@ -416,9 +418,9 @@ class _ShardedCosseratRodBlock:
 
     def merge_shard_states(self, state: dict[str, Any]) -> dict[str, Any]:
         """Build a unified logical block state on the primary shard device."""
-        assert state.get(SHARDED_STATE_KEY, False), (
-            "merge_shard_states requires a sharded state."
-        )
+        assert state.get(
+            SHARDED_STATE_KEY, False
+        ), "merge_shard_states requires a sharded state."
         merged: dict[str, Any] = {}
         for key in state["shards"][0]:
             chunks = []
@@ -446,9 +448,9 @@ class _ShardedCosseratRodBlock:
         self, merged: dict[str, Any], state: dict[str, Any]
     ) -> dict[str, Any]:
         """Scatter unified keys from ``merged`` back into shard states."""
-        assert state.get(SHARDED_STATE_KEY, False), (
-            "scatter_merged_state requires a sharded state."
-        )
+        assert state.get(
+            SHARDED_STATE_KEY, False
+        ), "scatter_merged_state requires a sharded state."
         scattered_shards = []
         node_offset = 0
         elem_offset = 0
@@ -471,9 +473,9 @@ class _ShardedCosseratRodBlock:
                         updated[key] = jax.device_put(value, device=shard_device)
                     continue
                 current = shard_state[key]
-                assert key in _ATTR_DOMAINS, (
-                    f"Cannot scatter unknown sharded state key {key!r}."
-                )
+                assert (
+                    key in _ATTR_DOMAINS
+                ), f"Cannot scatter unknown sharded state key {key!r}."
                 shard_value = _slice_merged_array_for_shard(
                     key=key,
                     value=value,

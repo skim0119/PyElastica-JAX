@@ -25,6 +25,7 @@ srun --ntasks="${SLURM_NNODES}" --ntasks-per-node=1 \
         uv sync --python 3.11
         source \"\${UV_PROJECT_ENVIRONMENT}/bin/activate\"
         uv pip install -U "jax[cuda13]"
+        uv pip install -U "numba"
     "
 echo "node venv setup finished in $((SECONDS - setup_start))s"
 

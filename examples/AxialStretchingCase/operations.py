@@ -40,11 +40,10 @@ def build_simulator(
     parameters: AxialStretchingParameters,
     *,
     backend: str,
-    dtype: np.dtype,
 ) -> tuple[AxialStretchingSimulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the axial stretching simulator."""
     simulator = AxialStretchingSimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend, device_dtype=dtype)
+    rod_block_cls = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 
     rod = ea.CosseratRod.straight_rod(

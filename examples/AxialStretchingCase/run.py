@@ -62,9 +62,8 @@ def main(
         final_time=final_time,
         time_step=time_step,
     )
-    dtype = np.dtype(np.float64)
 
-    simulator, block = build_simulator(parameters, backend=backend, dtype=dtype)
+    simulator, block = build_simulator(parameters, backend=backend)
     stepper = eaj.PositionVerletJAX()
 
     time_step = parameters.time_step

@@ -14,6 +14,8 @@ from muscle_rod import MuscleArm, MuscleConfig
 
 import jax
 
+jax.config.update("jax_enable_x64", True)
+
 
 class MuscleArmSimulator(ea.BaseSystemCollection, ea.JAXOps):
     pass
@@ -66,8 +68,6 @@ def main() -> None:
     parser.add_argument("--dt", type=float, default=1.0e-4)
     parser.add_argument("--frequency", type=float, default=2.0)
     args = parser.parse_args()
-
-    jax.config.update("jax_enable_x64", True)
 
     simulator = MuscleArmSimulator()
     simulator.enable_block_supports(

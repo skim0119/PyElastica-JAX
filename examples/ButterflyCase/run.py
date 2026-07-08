@@ -57,12 +57,10 @@ def main(
 ) -> None:
     """Run the butterfly simulation and save energy plot and animation."""
     parameters = ButterflyParameters(n_elem=n_elem, final_time=final_time)
-    dtype = np.dtype(np.float64)
 
     simulator, block, rod = build_simulator(
         parameters,
         backend=backend,
-        dtype=dtype,
     )
     stepper = eaj.PositionVerletJAX()
 
@@ -125,7 +123,9 @@ def main(
 
     times = np.array(callback_data["time"])
     energies = np.array(callback_data["total_energy"])
-    plot_energy_evolution(output_dir / "energy_evolution.png", times=times, energies=energies)
+    plot_energy_evolution(
+        output_dir / "energy_evolution.png", times=times, energies=energies
+    )
     plot_animation(
         output_dir / "butterfly.mp4",
         times=times,

@@ -55,9 +55,8 @@ def main(
 ) -> None:
     """Run the Timoshenko beam simulation and save the deflection plot."""
     parameters = TimoshenkoParameters(n_elem=n_elem, final_time=final_time)
-    dtype = np.dtype(np.float64)
 
-    simulator, block, rod = build_simulator(parameters, backend=backend, dtype=dtype)
+    simulator, block, rod = build_simulator(parameters, backend=backend)
     stepper = eaj.PositionVerletJAX()
 
     time_step = parameters.time_step
@@ -120,7 +119,9 @@ def main(
     block.from_device(update_rods=True)
 
     centerline_s = np.array(callback_data["centerline_s"], dtype=object)
-    centerline_deflection = np.array(callback_data["centerline_deflection"], dtype=object)
+    centerline_deflection = np.array(
+        callback_data["centerline_deflection"], dtype=object
+    )
     plot_final_deflection(
         output_dir / "timoshenko_deflection.png",
         rod=rod,

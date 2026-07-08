@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax.numpy as jnp
 import matplotlib.animation as manimation
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,14 +46,14 @@ class GravityForcesJax(eaj.NoOpsJax):
 
     def __init__(self, *, acc_gravity: np.ndarray, _system: object) -> None:
         del _system
-        self.acc_gravity = np.asarray(acc_gravity, dtype=np.float64)
+        self.acc_gravity = acc_gravity
 
     def jax_operate_synchronize(self, rod_view, time):
         del time
-        gravity = jnp.asarray(self.acc_gravity, dtype=rod_view.external_forces.dtype)
-        rod_view.external_forces = rod_view.external_forces + gravity[
-            :, None
-        ] * rod_view.mass[None, :]
+        rod_view.external_forces = (
+            rod_view.external_forces
+            + self.acc_gravity[:, None] * rod_view.mass[None, :]
+        )
         return rod_view
 
 
@@ -88,24 +87,22 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
         for node_idx, fixed_position in self.fixed_positions.items():
             rod_view.position_collection = rod_view.position_collection.at[
                 :, node_idx
-            ].set(jnp.asarray(fixed_position, dtype=rod_view.position_collection.dtype))
+            ].set(fixed_position)
         for elem_idx, fixed_director in self.fixed_directors.items():
             rod_view.director_collection = rod_view.director_collection.at[
                 :, :, elem_idx
-            ].set(jnp.asarray(fixed_director, dtype=rod_view.director_collection.dtype))
+            ].set(fixed_director)
         return rod_view
 
     def jax_operate_constrain_rates(self, rod_view, time):
         del time
-        dtype_v = rod_view.velocity_collection.dtype
-        dtype_w = rod_view.omega_collection.dtype
         for node_idx in self.fixed_positions:
-            rod_view.velocity_collection = rod_view.velocity_collection.at[:, node_idx].set(
-                jnp.zeros(3, dtype=dtype_v)
-            )
+            rod_view.velocity_collection = rod_view.velocity_collection.at[
+                :, node_idx
+            ].set(0.0)
         for elem_idx in self.fixed_directors:
             rod_view.omega_collection = rod_view.omega_collection.at[:, elem_idx].set(
-                jnp.zeros(3, dtype=dtype_w)
+                0.0
             )
         return rod_view
 
@@ -118,11 +115,10 @@ def build_simulator(
     parameters: CatenaryParameters,
     *,
     backend: str,
-    dtype: np.dtype,
 ) -> tuple[CatenarySimulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the catenary simulator."""
     simulator = CatenarySimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend, device_dtype=dtype)
+    rod_block_cls = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 
     start = np.zeros(3)
@@ -192,7 +188,7 @@ def plot_final_shape(
 ) -> None:
     """Plot the final catenary shape against the analytical solution."""
     final_position = positions[-1]
-    lowest_point = float(np.min(final_position[2]))
+    lowest_point = np.min(final_position[2])
     x_catenary = np.linspace(0.0, base_length, 100)
 
     def f_non_elastic_catenary(x: float) -> float:
@@ -231,14 +227,7 @@ def plot_animation(
     fps: int = 20,
 ) -> None:
     """Render a 2D animation of the settling catenary."""
-    positions_over_time = np.asarray(positions, dtype=object)
-
-    try:
-        writer = manimation.writers["ffmpeg"](fps=fps)
-    except (KeyError, RuntimeError):
-        writer = manimation.writers["pillow"](fps=fps)
-        output_path = output_path.with_suffix(".gif")
-
+    writer = manimation.writers["ffmpeg"](fps=fps)
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.set_xlim(0.0, base_length)
     ax.set_ylim(-0.5 * base_length, 0.5 * base_length)
@@ -247,8 +236,8 @@ def plot_animation(
     (line,) = ax.plot([], [], linewidth=2)
 
     with writer.saving(fig, str(output_path), dpi=150):
-        for frame_idx in tqdm(range(len(positions_over_time)), desc="Rendering catenary"):
-            frame = positions_over_time[frame_idx]
+        for frame_idx in tqdm(range(len(positions)), desc="Rendering catenary"):
+            frame = positions[frame_idx]
             line.set_data(frame[0], frame[2])
             ax.set_title(f"Catenary (t = {times[frame_idx]:.3f} s)")
             writer.grab_frame()
