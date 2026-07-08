@@ -14,8 +14,8 @@ from elastica_jax.contact.kernels import apply_capsule_pair_forces, apply_wall_c
 from elastica_jax.contact.spatial_hash import (
     default_cell_size,
     estimate_max_pairs,
-    rebuild_spatial_hash_pairs,
 )
+from elastica_jax.contact.spatial_hash_jax import rebuild_spatial_hash_pairs_jax
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
     SHARDED_STATE_KEY,
@@ -53,6 +53,7 @@ class BlockCapsuleMetadata:
     block_element_indices: np.ndarray
     max_pairs: int
     cell_size: float
+    max_neighbors_per_capsule: int = 64
 
     @property
     def n_capsules(self) -> int:
@@ -102,6 +103,7 @@ def build_block_capsule_metadata(
         block_element_indices=block_element_indices,
         max_pairs=max_pairs,
         cell_size=float(cell_size),
+        max_neighbors_per_capsule=max_neighbors_per_capsule,
     )
 
 
@@ -150,27 +152,6 @@ def install_capsule_contact_state(
     block.jax_set_state({**state, **contact_state})
 
 
-def _rebuild_pairs_numpy(
-    centers,
-    rod_ids,
-    axes,
-    lengths,
-    radii,
-    cell_size,
-    max_pairs,
-) -> tuple[np.ndarray, np.ndarray, np.int32]:
-    buffer = rebuild_spatial_hash_pairs(
-        centers=np.asarray(centers),
-        rod_ids=np.asarray(rod_ids),
-        axes=np.asarray(axes),
-        lengths=np.asarray(lengths),
-        radii=np.asarray(radii),
-        cell_size=float(cell_size),
-        max_pairs=int(max_pairs),
-    )
-    return buffer.pair_first, buffer.pair_second, np.int32(buffer.pair_count)
-
-
 def rebuild_contact_pairs_jax(
     *,
     centers: jax.Array,
@@ -180,26 +161,19 @@ def rebuild_contact_pairs_jax(
     radii: jax.Array,
     cell_size: float,
     max_pairs: int,
+    max_cell_occ: int,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Rebuild bounded pair buffers inside a traced JAX graph."""
-    result_shape = (
-        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
-        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
-        jax.ShapeDtypeStruct((), jnp.int32),
+    return rebuild_spatial_hash_pairs_jax(
+        centers=centers,
+        rod_ids=rod_ids,
+        axes=axes,
+        lengths=lengths,
+        radii=radii,
+        cell_size=cell_size,
+        max_pairs=max_pairs,
+        max_cell_occ=max_cell_occ,
     )
-    pair_first, pair_second, pair_count = jax.pure_callback(
-        _rebuild_pairs_numpy,
-        result_shape,
-        centers,
-        rod_ids,
-        axes,
-        lengths,
-        radii,
-        cell_size,
-        max_pairs,
-        vmap_method="sequential",
-    )
-    return pair_first, pair_second, pair_count
 
 
 def capsule_kinematics_from_block_state(
@@ -250,21 +224,45 @@ def _apply_capsule_contact_unified(
     pair_second = state[CONTACT_STATE_PAIR_SECOND]
     pair_count = state[CONTACT_STATE_PAIR_COUNT]
 
-    rebuilt_first, rebuilt_second, rebuilt_count = rebuild_contact_pairs_jax(
-        centers=kinematics["centers"],
-        rod_ids=op._rod_ids,
-        axes=kinematics["axes"],
-        lengths=kinematics["lengths"],
-        radii=kinematics["radii"],
-        cell_size=op.metadata.cell_size,
-        max_pairs=op.metadata.max_pairs,
+    def _rebuild(_):
+        return rebuild_contact_pairs_jax(
+            centers=kinematics["centers"],
+            rod_ids=op._rod_ids,
+            axes=kinematics["axes"],
+            lengths=kinematics["lengths"],
+            radii=kinematics["radii"],
+            cell_size=op.metadata.cell_size,
+            max_pairs=op.metadata.max_pairs,
+            max_cell_occ=op.metadata.max_neighbors_per_capsule,
+        )
+
+    def _keep(_):
+        return pair_first, pair_second, pair_count
+
+    pair_first, pair_second, pair_count = jax.lax.cond(
+        detection_due, _rebuild, _keep, operand=None
     )
-    pair_first = jnp.where(detection_due, rebuilt_first, pair_first)
-    pair_second = jnp.where(detection_due, rebuilt_second, pair_second)
-    pair_count = jnp.where(detection_due, rebuilt_count, pair_count)
 
     pair_slots = jnp.arange(op.metadata.max_pairs, dtype=jnp.int32)
     pair_active = pair_slots < pair_count
+
+    if op.contact_stiffness_initial is not None:
+        contact_stiffness = jnp.where(
+            time < op.stiffness_ramp_time,
+            op.contact_stiffness_initial,
+            op.contact_stiffness,
+        )
+    else:
+        contact_stiffness = op.contact_stiffness
+    if op.contact_damping_initial is not None:
+        contact_damping = jnp.where(
+            time < op.stiffness_ramp_time,
+            op.contact_damping_initial,
+            op.contact_damping,
+        )
+    else:
+        contact_damping = op.contact_damping
+    friction_gate = jnp.where(time >= op.friction_start_time, 1.0, 0.0)
 
     external_forces = state["external_forces"]
     external_torques = state["external_torques"]
@@ -287,14 +285,17 @@ def _apply_capsule_contact_unified(
         block_element_indices=kinematics["block_element_indices"],
         external_forces=external_forces,
         external_torques=external_torques,
-        contact_stiffness=op.contact_stiffness,
-        contact_damping=op.contact_damping,
+        contact_stiffness=contact_stiffness,
+        contact_damping=contact_damping,
         cached_candidates=state[CONTACT_STATE_CANDIDATE_MASK],
         last_detection_time=state[CONTACT_STATE_LAST_DETECTION_TIME],
         time=time,
         steps_between_detection=op.steps_between_detection,
         time_step=op.time_step,
-        cell_size=op.metadata.cell_size,
+        hertzian=op.hertzian,
+        friction_coefficient=op.friction_coefficient,
+        static_velocity_threshold=op.static_velocity_threshold,
+        friction_gate=friction_gate,
     )
     updated = dict(state)
     updated["external_forces"] = external_forces
@@ -308,7 +309,16 @@ def _apply_capsule_contact_unified(
 
 
 class CapsuleContactOp(NoBlockOpJax):
-    """Spatial-hash capsule–capsule contact for packed Cosserat rod blocks."""
+    """Spatial-hash capsule-capsule contact for packed Cosserat rod blocks.
+
+    By default the contact is the linear normal-spring/damper law. Optional
+    arguments enable a Hertzian ``gamma^1.5`` normal law (``hertzian=True``), a
+    time-ramped soft-to-hard stiffness (``contact_stiffness_initial`` /
+    ``contact_damping_initial`` / ``stiffness_ramp_time``), and isotropic kinetic
+    Coulomb friction activated after ``friction_start_time``. These reproduce the
+    C++ nest-simulator contact model while leaving the default behaviour intact
+    for other cases.
+    """
 
     communication_scope = CommunicationScope.HALO_READ
 
@@ -322,6 +332,13 @@ class CapsuleContactOp(NoBlockOpJax):
         steps_between_detection: int = 0,
         time_step: float,
         max_neighbors_per_capsule: int = 64,
+        hertzian: bool = False,
+        contact_stiffness_initial: float | None = None,
+        contact_damping_initial: float | None = None,
+        stiffness_ramp_time: float = 0.0,
+        friction_coefficient: float = 0.0,
+        static_velocity_threshold: float = 1.0,
+        friction_start_time: float = float("inf"),
         _system=None,
     ) -> None:
         assert (
@@ -342,6 +359,13 @@ class CapsuleContactOp(NoBlockOpJax):
         self.contact_damping = contact_damping
         self.steps_between_detection = steps_between_detection
         self.time_step = time_step
+        self.hertzian = hertzian
+        self.contact_stiffness_initial = contact_stiffness_initial
+        self.contact_damping_initial = contact_damping_initial
+        self.stiffness_ramp_time = stiffness_ramp_time
+        self.friction_coefficient = friction_coefficient
+        self.static_velocity_threshold = static_velocity_threshold
+        self.friction_start_time = friction_start_time
         self._rod_ids = jnp.asarray(metadata.rod_ids)
 
     def jax_block_operate_synchronize(self, state, time):

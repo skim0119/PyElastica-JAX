@@ -9,13 +9,14 @@ from elastica_jax.contact.capsule_contact import (
     initialize_capsule_contact_state,
     install_capsule_contact_state,
 )
-from elastica_jax.contact.kernels import CONTACT_THRESHOLD
+from elastica_jax.contact.kernels import CONTACT_THRESHOLD, slip_ramp
 from elastica_jax.contact.spatial_hash import (
     SpatialHashPairBuffer,
     default_cell_size,
     estimate_max_pairs,
     rebuild_spatial_hash_pairs,
 )
+from elastica_jax.contact.spatial_hash_jax import rebuild_spatial_hash_pairs_jax
 
 __all__ = [
     "BlockCapsuleMetadata",
@@ -30,4 +31,6 @@ __all__ = [
     "initialize_capsule_contact_state",
     "install_capsule_contact_state",
     "rebuild_spatial_hash_pairs",
+    "rebuild_spatial_hash_pairs_jax",
+    "slip_ramp",
 ]

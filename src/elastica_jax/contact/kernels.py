@@ -42,25 +42,108 @@ def scatter_element_loads(
     return external_forces, external_torques
 
 
+def slip_ramp(speed, threshold):
+    """Static-to-kinetic blend factor (the C++ ``_linear`` function).
+
+    Returns ``1`` for ``speed <= threshold`` (fully static, no kinetic
+    friction), ramps linearly to ``0`` at ``1.5 * threshold``, and stays ``0``
+    for faster slip (fully kinetic).
+
+    Parameters
+    ----------
+    speed : jax.Array
+        Tangential slip speed magnitude.
+    threshold : float | jax.Array
+        Static velocity threshold ``v_static``.
+
+    Returns
+    -------
+    jax.Array
+        Blend factor in ``[0, 1]`` with the same shape as ``speed``.
+    """
+    speed = jnp.abs(speed)
+    threshold = jnp.abs(threshold)
+    width = 0.5 * threshold
+    ramp = jnp.abs(1.0 - jnp.minimum(1.0, (speed - threshold) / width))
+    factor = jnp.where(speed > threshold, ramp, 1.0)
+    return jnp.where(speed > threshold + width, 0.0, factor)
+
+
 def contact_force(
-    distance, normal, relative_velocity, *, contact_stiffness, contact_damping
+    distance,
+    normal,
+    relative_velocity,
+    *,
+    contact_stiffness,
+    contact_damping,
+    hertzian=False,
+    friction_coefficient=0.0,
+    static_velocity_threshold=1.0,
+    friction_gate=1.0,
 ):
+    """Normal contact response with optional Hertzian law and Coulomb friction.
+
+    Parameters
+    ----------
+    distance : jax.Array
+        Signed surface gap; negative under overlap (penetration ``= -distance``).
+    normal : jax.Array
+        Unit contact normal pointing toward the first body, shape ``(..., 3)``.
+    relative_velocity : jax.Array
+        Velocity of the first body relative to the second, shape ``(..., 3)``.
+    contact_stiffness, contact_damping : float | jax.Array
+        Normal elastic and viscous coefficients.
+    hertzian : bool, optional
+        If ``True`` use the ``gamma^1.5`` elastic / ``gamma^0.5`` damping law and
+        the full (unscaled, unclamped) coefficients, matching the C++ nest
+        contact. If ``False`` (default) use the linear ``0.5`` scaled and
+        non-negative-clamped law, preserving the original behaviour.
+    friction_coefficient : float, optional
+        Isotropic kinetic Coulomb coefficient. ``0`` (default) disables friction.
+    static_velocity_threshold : float, optional
+        Slip speed below which kinetic friction is suppressed (see ``slip_ramp``).
+    friction_gate : float | jax.Array, optional
+        Multiplicative gate (``0`` or ``1``) used to activate friction after a
+        given simulation time.
+
+    Returns
+    -------
+    jax.Array
+        Contact force on the first body, shape ``(..., 3)``.
+    """
     normal_speed = -jnp.sum(relative_velocity * normal, axis=-1)
-    stiffness = 0.5 * contact_stiffness
-    damping = 0.5 * contact_damping
-    magnitude = jnp.maximum(0.0, stiffness * (-distance) + damping * normal_speed)
+    penetration = -distance
+    active = distance < -CONTACT_THRESHOLD
+    if hertzian:
+        gamma_sqrt = jnp.sqrt(jnp.maximum(penetration, 0.0))
+        magnitude = (
+            contact_stiffness * penetration + contact_damping * normal_speed
+        ) * gamma_sqrt
+    else:
+        magnitude = jnp.maximum(
+            0.0,
+            0.5 * contact_stiffness * penetration
+            + 0.5 * contact_damping * normal_speed,
+        )
+    normal_force = magnitude[..., None] * normal
+
     tangent_velocity = -relative_velocity - normal_speed[..., None] * normal
     tangent_speed = jnp.linalg.norm(tangent_velocity, axis=-1)
-    tangent_magnitude = jnp.minimum(damping * tangent_speed, 1.0e-10 * magnitude)
     tangent = tangent_velocity / jnp.maximum(
         tangent_speed[..., None], CONTACT_THRESHOLD
     )
-    active = distance < -CONTACT_THRESHOLD
-    return jnp.where(
-        active[..., None],
-        magnitude[..., None] * normal + tangent_magnitude[..., None] * tangent,
-        0.0,
-    )
+    if friction_coefficient:
+        blend = slip_ramp(tangent_speed, static_velocity_threshold)
+        friction_magnitude = (
+            friction_coefficient * jnp.abs(magnitude) * (1.0 - blend) * friction_gate
+        )
+        tangential = friction_magnitude[..., None] * tangent
+    else:
+        tangent_magnitude = jnp.minimum(
+            0.5 * contact_damping * tangent_speed, 1.0e-10 * magnitude
+        )
+        tangential = tangent_magnitude[..., None] * tangent
+    return jnp.where(active[..., None], normal_force + tangential, 0.0)
 
 
 def apply_capsule_pair_forces(
@@ -85,7 +168,10 @@ def apply_capsule_pair_forces(
     time,
     steps_between_detection,
     time_step,
-    cell_size,
+    hertzian=False,
+    friction_coefficient=0.0,
+    static_velocity_threshold=1.0,
+    friction_gate=1.0,
 ):
     """Fine-phase capsule contact on a bounded active pair list."""
     first = pair_first
@@ -108,21 +194,13 @@ def apply_capsule_pair_forces(
     normal = delta / jnp.maximum(axis_distance[:, None], CONTACT_THRESHOLD)
     distance = axis_distance - radii[first] - radii[second]
 
-    cells1 = jnp.floor(c1 / cell_size).astype(jnp.int32)
-    cells2 = jnp.floor(c2 / cell_size).astype(jnp.int32)
-    grid_neighbors = jnp.all(jnp.abs(cells1 - cells2) <= 1, axis=-1)
-    extent1 = half1[:, None] * jnp.abs(a1) + radii[first, None]
-    extent2 = half2[:, None] * jnp.abs(a2) + radii[second, None]
-    detected_candidates = grid_neighbors & jnp.all(
-        jnp.abs(c1 - c2) <= extent1 + extent2, axis=-1
-    )
     detection_interval = steps_between_detection * time_step
     detection_due = (detection_interval == 0.0) | (
         time - last_detection_time >= detection_interval
     )
     broad_phase = jnp.where(
         detection_due,
-        detected_candidates & active_pair,
+        active_pair,
         cached_candidates & active_pair,
     )
     last_detection_time = jnp.where(detection_due, time, last_detection_time)
@@ -137,6 +215,10 @@ def apply_capsule_pair_forces(
         v1 - v2,
         contact_stiffness=contact_stiffness,
         contact_damping=contact_damping,
+        hertzian=hertzian,
+        friction_coefficient=friction_coefficient,
+        static_velocity_threshold=static_velocity_threshold,
+        friction_gate=friction_gate,
     )
     force = jnp.where((axis_distance > CONTACT_THRESHOLD)[:, None], force, 0.0)
     parallel_overlap = (
