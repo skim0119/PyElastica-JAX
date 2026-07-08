@@ -314,11 +314,13 @@ simulator.operate_block(rod_block).using(
 
 > Work-in-progress.
 
-The interaction API is currently under design and construction.
-The goal is to support the following syntax:
+Register pair operators with ``JAXInteraction``. Each operator receives rod-local
+views through ``jax_operation`` and may update one or both rods:
 
 ```py
 class Simulator(ea.BaseSystemCollection, eaj.JAXInteraction):
+    ...
+
 
 class Repell(eaj.NoRodRodBlockOpJax):
     def jax_operation(self, rod_one_view, rod_two_view, time):
@@ -328,12 +330,19 @@ class Repell(eaj.NoRodRodBlockOpJax):
 
 simulator.pairwise_interaction(rod_one, rod_two).using(
     Repell,
-    ... # Arguments for Repell
+    ...  # Arguments for Repell
 )
 ```
 
-It is slightly getting convoluted to account for cross-device interaction within the JIT compiled loop.
-For now, it is working when rod pair is on the same device.
+Rods may live in the same memory block or in separate blocks on the **same
+device**. On a single device, ``PositionVerletJAX`` compiles one coupled
+``fori_loop`` over all block states and applies rod-to-rod operators during the
+global synchronize stage.
+
+See the [Muscular Snake example](examples/MuscularSnake/) for a full case with a
+body block, a muscle block, and eight cross-block surface joints.
+
+Cross-device rod-to-rod coupling between independent blocks is not yet supported.
 
 ## Advanced Usage
 
