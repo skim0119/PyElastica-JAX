@@ -3,8 +3,7 @@
 GPU JAX reproduction of the enclosed snake-pit active-matter case: randomly
 packed active snakes inside a floor-and-four-wall pit, driven by a traveling-wave
 internal torque and resolved with capsule-capsule rod-rod contact and
-capsule-half-space wall contact. The reference physics are specified in
-[`CASE_DESCRIPTION.md`](CASE_DESCRIPTION.md).
+capsule-half-space wall contact.
 
 ## Layout
 

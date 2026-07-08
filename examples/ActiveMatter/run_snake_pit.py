@@ -55,14 +55,14 @@ class SnakePitParameters:
     length: float = 0.35
     radius_ratio: float = 0.011
     density: float = 1000.0
-    youngs_modulus: float = 1.0e6
+    youngs_modulus: float = 1.0e5  # * 10
     time_period: float = 2.0
     wave_length: float = 1.0
-    contact_stiffness: float = 1.0e4
+    contact_stiffness: float = 1.0e3  # * 10
     contact_damping: float = 1.0e-3
     gravitational_acc: float = -0.1
     damping_rate: float = 1.0e-4
-    time_step: float = 5.0e-5
+    time_step: float = 2.0e-4  # 5.0e-5
     activation_start_time_nd: float = 5.0
     packing_initial_vertical_span_ratio: float = 1.0
     packing_initial_radial_span_ratio: float = 1.0
