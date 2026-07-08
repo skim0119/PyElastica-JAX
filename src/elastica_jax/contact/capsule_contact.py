@@ -14,6 +14,7 @@ from elastica_jax.contact.kernels import apply_capsule_pair_forces, apply_wall_c
 from elastica_jax.contact.spatial_hash import (
     default_cell_size,
     estimate_max_pairs,
+    rebuild_spatial_hash_pairs,
 )
 from elastica_jax.contact.spatial_hash_jax import rebuild_spatial_hash_pairs_jax
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
@@ -176,6 +177,80 @@ def rebuild_contact_pairs_jax(
     )
 
 
+def _rebuild_pairs_numpy(
+    centers,
+    rod_ids,
+    axes,
+    lengths,
+    radii,
+    cell_size,
+    max_pairs,
+) -> tuple[np.ndarray, np.ndarray, np.int32]:
+    buffer = rebuild_spatial_hash_pairs(
+        centers=np.asarray(centers),
+        rod_ids=np.asarray(rod_ids),
+        axes=np.asarray(axes),
+        lengths=np.asarray(lengths),
+        radii=np.asarray(radii),
+        cell_size=float(cell_size),
+        max_pairs=int(max_pairs),
+    )
+    return buffer.pair_first, buffer.pair_second, np.int32(buffer.pair_count)
+
+
+def rebuild_contact_pairs_host_jax(
+    *,
+    centers: jax.Array,
+    rod_ids: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    cell_size: float,
+    max_pairs: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Rebuild bounded pair buffers via host callback (CPU-optimized path)."""
+    result_shape = (
+        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
+        jax.ShapeDtypeStruct((max_pairs,), jnp.int32),
+        jax.ShapeDtypeStruct((), jnp.int32),
+    )
+    pair_first, pair_second, pair_count = jax.pure_callback(
+        _rebuild_pairs_numpy,
+        result_shape,
+        centers,
+        rod_ids,
+        axes,
+        lengths,
+        radii,
+        cell_size,
+        max_pairs,
+        vmap_method="sequential",
+    )
+    return pair_first, pair_second, pair_count
+
+
+def _system_uses_cuda_backend(system: object) -> bool:
+    """Return whether the configured block executes on CUDA devices."""
+
+    candidate_devices: list[object] = []
+    if hasattr(system, "_devices"):
+        candidate_devices.extend(list(getattr(system, "_devices")))
+    if hasattr(system, "_device"):
+        candidate_devices.append(getattr(system, "_device"))
+    if hasattr(system, "_initial_device"):
+        candidate_devices.append(getattr(system, "_initial_device"))
+    if hasattr(system, "_primary_block"):
+        primary = getattr(system, "_primary_block")
+        if hasattr(primary, "_initial_device"):
+            candidate_devices.append(getattr(primary, "_initial_device"))
+
+    for device in candidate_devices:
+        platform = str(getattr(device, "platform", "")).lower()
+        if platform in {"cuda", "gpu"}:
+            return True
+    return False
+
+
 def capsule_kinematics_from_block_state(
     state: dict[str, Any],
     metadata: BlockCapsuleMetadata,
@@ -225,7 +300,18 @@ def _apply_capsule_contact_unified(
     pair_count = state[CONTACT_STATE_PAIR_COUNT]
 
     def _rebuild(_):
-        return rebuild_contact_pairs_jax(
+        if op._use_device_spatial_hash:
+            return rebuild_contact_pairs_jax(
+                centers=kinematics["centers"],
+                rod_ids=op._rod_ids,
+                axes=kinematics["axes"],
+                lengths=kinematics["lengths"],
+                radii=kinematics["radii"],
+                cell_size=op.metadata.cell_size,
+                max_pairs=op.metadata.max_pairs,
+                max_cell_occ=op.metadata.max_neighbors_per_capsule,
+            )
+        return rebuild_contact_pairs_host_jax(
             centers=kinematics["centers"],
             rod_ids=op._rod_ids,
             axes=kinematics["axes"],
@@ -233,7 +319,6 @@ def _apply_capsule_contact_unified(
             radii=kinematics["radii"],
             cell_size=op.metadata.cell_size,
             max_pairs=op.metadata.max_pairs,
-            max_cell_occ=op.metadata.max_neighbors_per_capsule,
         )
 
     def _keep(_):
@@ -367,6 +452,7 @@ class CapsuleContactOp(NoBlockOpJax):
         self.static_velocity_threshold = static_velocity_threshold
         self.friction_start_time = friction_start_time
         self._rod_ids = jnp.asarray(metadata.rod_ids)
+        self._use_device_spatial_hash = _system_uses_cuda_backend(_system)
 
     def jax_block_operate_synchronize(self, state, time):
         if state.get(SHARDED_STATE_KEY, False):
