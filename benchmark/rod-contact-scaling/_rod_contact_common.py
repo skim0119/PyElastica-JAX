@@ -64,6 +64,12 @@ class ContactScalingSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     """System collection for the rod-rod contact scaling benchmark."""
 
 
+class ContactScalingPyElasticaSimulator(
+    ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Contact
+):
+    """PyElastica baseline simulator for the rod-rod contact benchmark."""
+
+
 class CenterAttractForcesJax(eaj.NoBlockOpJax):
     """Apply a horizontal-plane spring that pulls nodes toward a fixed center.
 
@@ -97,6 +103,23 @@ class CenterAttractForcesJax(eaj.NoBlockOpJax):
             **state,
             "external_forces": state["external_forces"] + attract_forces,
         }
+
+
+class CenterAttractForcesPy(ea.NoForces):
+    """Apply a horizontal-plane spring that pulls nodes toward a fixed center."""
+
+    def __init__(self, *, attract_strength: float, center: np.ndarray) -> None:
+        super().__init__()
+        self.attract_strength = float(attract_strength)
+        self.center = np.asarray(center, dtype=np.float64)
+
+    def apply_forces(self, system, time: np.float64 = 0.0) -> None:
+        del time
+        delta = self.center[:, None] - system.position_collection
+        delta[2, :] = 0.0
+        system.external_forces += (
+            self.attract_strength * delta * system.mass[None, :]
+        )
 
 
 def _orthonormal_normal(direction: np.ndarray) -> np.ndarray:
@@ -173,6 +196,60 @@ def build_simulation(
     return simulator, rod_block
 
 
+def build_simulation_pyelastica(
+    config: ContactScalingConfig,
+) -> tuple[ContactScalingPyElasticaSimulator, list[ea.CosseratRod]]:
+    """Build the matching PyElastica rod-rod contact benchmark."""
+    simulator = ContactScalingPyElasticaSimulator()
+    rods: list[ea.CosseratRod] = []
+
+    ring_radius = config.ring_radius
+    for rod_idx in range(config.n_rods):
+        theta = 2.0 * np.pi * rod_idx / config.n_rods
+        start = np.array(
+            [
+                ring_radius * np.cos(theta),
+                ring_radius * np.sin(theta),
+                0.5 * config.rod_length,
+            ],
+            dtype=np.float64,
+        )
+        direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        rod = ea.CosseratRod.straight_rod(
+            config.n_elements,
+            start,
+            direction,
+            _orthonormal_normal(direction),
+            config.rod_length,
+            config.rod_radius,
+            DENSITY,
+            youngs_modulus=YOUNGS_MODULUS,
+        )
+        simulator.append(rod)
+        simulator.add_forcing_to(rod).using(
+            CenterAttractForcesPy,
+            attract_strength=ATTRACT_STRENGTH,
+            center=config.attract_center,
+        )
+        simulator.dampen(rod).using(
+            ea.AnalyticalLinearDamper,
+            damping_constant=DAMPING_RATE,
+            time_step=config.time_step,
+        )
+        rods.append(rod)
+
+    for left_idx in range(len(rods)):
+        for right_idx in range(left_idx + 1, len(rods)):
+            simulator.detect_contact_between(rods[left_idx], rods[right_idx]).using(
+                ea.RodRodContact,
+                k=CONTACT_STIFFNESS,
+                nu=CONTACT_DAMPING,
+            )
+
+    simulator.finalize()
+    return simulator, rods
+
+
 def _block_until_ready(rod_block: eaj._CosseratRodMemoryBlock) -> None:
     for leaf in jax.tree_util.tree_leaves(rod_block.jax_get_state()):
         if hasattr(leaf, "block_until_ready"):
@@ -226,4 +303,38 @@ def run_rollout(
         _block_until_ready(rod_block)
         rollout_seconds = time.perf_counter() - rollout_start
 
+    return instantiate_seconds, rollout_seconds
+
+
+def run_rollout_pyelastica(
+    *,
+    n_rods: int,
+    steps: int,
+    warmup_runs: int,
+    n_elements: int = N_ELEMENTS,
+) -> BenchmarkTiming:
+    """Build the PyElastica simulator and time a fixed-length rollout."""
+    assert steps > 0, "steps must be positive."
+    assert warmup_runs >= 0, "warmup_runs must be nonnegative."
+
+    config = ContactScalingConfig(
+        n_rods=n_rods,
+        n_elements=n_elements,
+    )
+    dt_value = np.float64(config.time_step)
+
+    instantiate_start = time.perf_counter()
+    simulator, _ = build_simulation_pyelastica(config)
+    instantiate_seconds = time.perf_counter() - instantiate_start
+
+    stepper = ea.PositionVerlet()
+    time_value = np.float64(0.0)
+    for _ in range(warmup_runs):
+        for _ in range(steps):
+            time_value = stepper.step(simulator, time_value, dt_value)
+
+    rollout_start = time.perf_counter()
+    for _ in range(steps):
+        time_value = stepper.step(simulator, time_value, dt_value)
+    rollout_seconds = time.perf_counter() - rollout_start
     return instantiate_seconds, rollout_seconds
