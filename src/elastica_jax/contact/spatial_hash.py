@@ -1,4 +1,4 @@
-"""Host-side spatial-hash broad phase for capsule contact."""
+"""Host-side spatial-hash broad phase for capsule contact (reference implementation)."""
 
 from __future__ import annotations
 
