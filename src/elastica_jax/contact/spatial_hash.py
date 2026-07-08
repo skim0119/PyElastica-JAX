@@ -43,6 +43,86 @@ def estimate_max_pairs(
     )
 
 
+def estimate_all_cross_rod_pairs(rod_ids: np.ndarray) -> int:
+    """Return the number of unordered element pairs from distinct rods.
+
+    This matches the PyElastica rod-rod registration cost for a packed block:
+    every cross-rod element pair may enter the broad phase.
+    """
+    rod_ids = np.asarray(rod_ids)
+    n_capsules = int(rod_ids.size)
+    assert n_capsules >= 0, "rod_ids must be nonempty or empty."
+    if n_capsules < 2:
+        return 0
+    _, counts = np.unique(rod_ids, return_counts=True)
+    same_rod = int(np.sum(counts * (counts - 1) // 2))
+    return int(n_capsules * (n_capsules - 1) // 2 - same_rod)
+
+
+def rebuild_all_pairs(
+    *,
+    centers: np.ndarray,
+    rod_ids: np.ndarray,
+    axes: np.ndarray,
+    lengths: np.ndarray,
+    radii: np.ndarray,
+    max_pairs: int,
+) -> SpatialHashPairBuffer:
+    """Build a bounded cross-rod pair list by all-pairs AABB testing.
+
+    This mirrors PyElastica's non-hashed rung: every cross-rod candidate is
+    considered, then pruned by bounding-box overlap (no spatial hash).
+    """
+    assert centers.ndim == 2 and centers.shape[1] == 3, "centers must have shape (N, 3)."
+    n_capsules = centers.shape[0]
+    assert (
+        rod_ids.shape == (n_capsules,)
+        and axes.shape == (n_capsules, 3)
+        and lengths.shape == (n_capsules,)
+        and radii.shape == (n_capsules,)
+    ), "Capsule metadata must be aligned with centers."
+    assert max_pairs > 0, "max_pairs must be positive."
+
+    pair_first: list[int] = []
+    pair_second: list[int] = []
+    half_lengths = 0.5 * lengths
+    for first_index in range(n_capsules):
+        for second_index in range(first_index + 1, n_capsules):
+            if rod_ids[first_index] == rod_ids[second_index]:
+                continue
+            if not _capsule_aabb_overlap(
+                centers[first_index],
+                axes[first_index],
+                half_lengths[first_index],
+                radii[first_index],
+                centers[second_index],
+                axes[second_index],
+                half_lengths[second_index],
+                radii[second_index],
+            ):
+                continue
+            pair_first.append(first_index)
+            pair_second.append(second_index)
+            if len(pair_first) >= max_pairs:
+                break
+        if len(pair_first) >= max_pairs:
+            break
+
+    assert len(pair_first) <= max_pairs, "All-pairs buffer overflowed."
+    buffer_first = np.full(max_pairs, -1, dtype=np.int32)
+    buffer_second = np.full(max_pairs, -1, dtype=np.int32)
+    pair_count = len(pair_first)
+    if pair_count > 0:
+        buffer_first[:pair_count] = np.asarray(pair_first, dtype=np.int32)
+        buffer_second[:pair_count] = np.asarray(pair_second, dtype=np.int32)
+    return SpatialHashPairBuffer(
+        pair_first=buffer_first,
+        pair_second=buffer_second,
+        pair_count=pair_count,
+        max_pairs=max_pairs,
+    )
+
+
 def _capsule_aabb_overlap(
     center_a: np.ndarray,
     axis_a: np.ndarray,
