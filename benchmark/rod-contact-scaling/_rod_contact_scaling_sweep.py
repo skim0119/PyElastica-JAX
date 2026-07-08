@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import TypeAlias
+from typing import Callable, TypeAlias
 
 import click
 import matplotlib.pyplot as plt
@@ -14,6 +14,7 @@ from tqdm import tqdm
 from _rod_contact_common import N_ELEMENTS, run_rollout
 
 SweepPoint: TypeAlias = tuple[int, int, float, float]
+RunRolloutFn: TypeAlias = Callable[..., tuple[float, float]]
 
 
 def sweep_backend(
@@ -26,6 +27,7 @@ def sweep_backend(
     n_elements: int,
     steps_between_detection: int,
     verbose: bool,
+    run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> list[SweepPoint]:
     """Time rollouts for ``n_rods = 2**exp`` across an exponent range."""
     assert min_exp >= 0, "min exponent must be nonnegative."
@@ -38,14 +40,16 @@ def sweep_backend(
         disable=not verbose,
     ):
         n_rods = 2**exponent
-        instantiate_seconds, rollout_seconds = run_rollout(
-            backend=backend,
-            n_rods=n_rods,
-            steps=steps,
-            warmup_runs=warmup_runs,
-            n_elements=n_elements,
-            steps_between_detection=steps_between_detection,
-        )
+        run_kwargs = {
+            "n_rods": n_rods,
+            "steps": steps,
+            "warmup_runs": warmup_runs,
+            "n_elements": n_elements,
+        }
+        if run_rollout_fn is run_rollout:
+            run_kwargs["backend"] = backend
+            run_kwargs["steps_between_detection"] = steps_between_detection
+        instantiate_seconds, rollout_seconds = run_rollout_fn(**run_kwargs)
         print(
             f"{backend} n_rods={n_rods} (2^{exponent}): "
             f"instantiate={instantiate_seconds:.3f}s "
@@ -73,7 +77,7 @@ def export_scaling_plot(
     ax.set_xlabel("number of rods")
     ax.set_ylabel("rollout wall time (s)")
     ax.set_title(
-        f"Rod-rod contact scaling ({steps} steps, {n_elements} elements/rod)"
+        f"Rod-Rod contact scaling ({steps} steps, {n_elements} elements/rod)"
     )
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
@@ -138,6 +142,7 @@ def run_scaling_benchmark(
     output_plot: Path,
     output_csv: Path | None,
     verbose: bool,
+    run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> None:
     """Run one backend sweep and export CSV + plot."""
     points = sweep_backend(
@@ -149,6 +154,7 @@ def run_scaling_benchmark(
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
         verbose=verbose,
+        run_rollout_fn=run_rollout_fn,
     )
     series = {label: points}
     csv_path = output_csv if output_csv is not None else output_plot.with_suffix(".csv")
@@ -167,7 +173,13 @@ def run_scaling_benchmark(
     )
 
 
-def scaling_cli(backend: str, label: str, default_plot: str) -> click.Command:
+def scaling_cli(
+    backend: str,
+    label: str,
+    default_plot: str,
+    *,
+    run_rollout_fn: RunRolloutFn = run_rollout,
+) -> click.Command:
     """Return a click command configured for one backend."""
 
     @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -221,6 +233,7 @@ def scaling_cli(backend: str, label: str, default_plot: str) -> click.Command:
             output_plot=output,
             output_csv=csv_output,
             verbose=not quiet,
+            run_rollout_fn=run_rollout_fn,
         )
 
     return main
