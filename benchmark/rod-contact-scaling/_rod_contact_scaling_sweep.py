@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 from pathlib import Path
 from typing import Callable, TypeAlias
 
@@ -47,9 +48,12 @@ def sweep_backend(
             "warmup_runs": warmup_runs,
             "n_elements": n_elements,
         }
-        if run_rollout_fn is run_rollout:
+        rollout_params = inspect.signature(run_rollout_fn).parameters
+        if "backend" in rollout_params:
             run_kwargs["backend"] = backend
+        if "steps_between_detection" in rollout_params:
             run_kwargs["steps_between_detection"] = steps_between_detection
+        if "broad_phase" in rollout_params:
             run_kwargs["broad_phase"] = broad_phase
         instantiate_seconds, rollout_seconds = run_rollout_fn(**run_kwargs)
         print(

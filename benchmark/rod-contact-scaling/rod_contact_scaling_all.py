@@ -12,7 +12,12 @@ from _rod_contact_scaling_sweep import (
     export_scaling_plot,
     sweep_backend,
 )
-from _rod_contact_common import N_ELEMENTS, run_rollout, run_rollout_pyelastica
+from _rod_contact_common import (
+    N_ELEMENTS,
+    run_rollout,
+    run_rollout_pairwise,
+    run_rollout_pyelastica,
+)
 
 
 def _backend_available(name: str) -> bool:
@@ -65,13 +70,13 @@ def _backend_available(name: str) -> bool:
     "--cpu-old-min-exp",
     type=int,
     default=None,
-    help="Override minimum exponent for JAX CPU all-pairs sweep.",
+    help="Override minimum exponent for JAX CPU pairwise RodRodContact sweep.",
 )
 @click.option(
     "--cpu-old-max-exp",
     type=int,
     default=None,
-    help="Override maximum exponent for JAX CPU all-pairs sweep.",
+    help="Override maximum exponent for JAX CPU pairwise RodRodContact sweep.",
 )
 @click.option("--steps", type=int, default=200, show_default=True)
 @click.option("--warmup-runs", type=int, default=1, show_default=True)
@@ -101,7 +106,7 @@ def _backend_available(name: str) -> bool:
 @click.option(
     "--skip-cpu-old",
     is_flag=True,
-    help="Skip the JAX CPU all-pairs (PyElastica-style) sweep.",
+    help="Skip the JAX CPU pairwise RodRodContact (PyElastica-style) sweep.",
 )
 @click.option("--skip-gpu", is_flag=True, help="Skip the JAX CUDA sweep.")
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
@@ -180,9 +185,8 @@ def main(
             warmup_runs=warmup_runs,
             n_elements=n_elements,
             steps_between_detection=steps_between_detection,
-            broad_phase="all_pairs",
             verbose=verbose,
-            run_rollout_fn=run_rollout,
+            run_rollout_fn=run_rollout_pairwise,
         )
 
     if not skip_gpu:

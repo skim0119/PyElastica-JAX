@@ -27,6 +27,7 @@ from elastica_jax.block_operation import CommunicationScope, NoBlockOpJax
 from elastica_jax.contact import (
     BlockCapsuleMetadata,
     CapsuleContactOp,
+    RodRodContactJax,
     WallContactOp,
     build_block_capsule_metadata,
     install_capsule_contact_state,

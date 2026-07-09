@@ -9,6 +9,7 @@ from elastica_jax.contact.capsule_contact import (
     initialize_capsule_contact_state,
     install_capsule_contact_state,
 )
+from elastica_jax.contact.rod_rod_contact import RodRodContactJax
 from elastica_jax.contact.kernels import CONTACT_THRESHOLD, slip_ramp
 from elastica_jax.contact.spatial_hash import (
     SpatialHashPairBuffer,
@@ -26,6 +27,7 @@ from elastica_jax.contact.spatial_hash_jax import (
 __all__ = [
     "BlockCapsuleMetadata",
     "CapsuleContactOp",
+    "RodRodContactJax",
     "CONTACT_THRESHOLD",
     "SpatialHashPairBuffer",
     "WallContactOp",
