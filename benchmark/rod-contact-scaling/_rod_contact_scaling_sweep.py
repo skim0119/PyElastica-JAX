@@ -26,6 +26,7 @@ def sweep_backend(
     warmup_runs: int,
     n_elements: int,
     steps_between_detection: int,
+    broad_phase: str = "spatial_hash",
     verbose: bool,
     run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> list[SweepPoint]:
@@ -49,6 +50,7 @@ def sweep_backend(
         if run_rollout_fn is run_rollout:
             run_kwargs["backend"] = backend
             run_kwargs["steps_between_detection"] = steps_between_detection
+            run_kwargs["broad_phase"] = broad_phase
         instantiate_seconds, rollout_seconds = run_rollout_fn(**run_kwargs)
         print(
             f"{backend} n_rods={n_rods} (2^{exponent}): "
@@ -139,6 +141,7 @@ def run_scaling_benchmark(
     warmup_runs: int,
     n_elements: int,
     steps_between_detection: int,
+    broad_phase: str = "spatial_hash",
     output_plot: Path,
     output_csv: Path | None,
     verbose: bool,
@@ -153,6 +156,7 @@ def run_scaling_benchmark(
         warmup_runs=warmup_runs,
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
+        broad_phase=broad_phase,
         verbose=verbose,
         run_rollout_fn=run_rollout_fn,
     )
@@ -196,6 +200,13 @@ def scaling_cli(
         help="Broad-phase refresh interval (0 = every step).",
     )
     @click.option(
+        "--broad-phase",
+        type=click.Choice(["spatial_hash", "all_pairs"]),
+        default="spatial_hash",
+        show_default=True,
+        help="JAX contact broad-phase strategy.",
+    )
+    @click.option(
         "--output",
         type=click.Path(path_type=Path),
         default=Path(default_plot),
@@ -216,6 +227,7 @@ def scaling_cli(
         warmup_runs: int,
         n_elements: int,
         steps_between_detection: int,
+        broad_phase: str,
         output: Path,
         csv_output: Path | None,
         quiet: bool,
@@ -230,6 +242,7 @@ def scaling_cli(
             warmup_runs=warmup_runs,
             n_elements=n_elements,
             steps_between_detection=steps_between_detection,
+            broad_phase=broad_phase,
             output_plot=output,
             output_csv=csv_output,
             verbose=not quiet,

@@ -134,6 +134,7 @@ def build_simulation(
     config: ContactScalingConfig,
     *,
     device: jax.Device,
+    broad_phase: str = "spatial_hash",
 ) -> tuple[ContactScalingSimulator, eaj._CosseratRodMemoryBlock]:
     """Build a packed rod block with center attraction and rod-rod contact only."""
     simulator = ContactScalingSimulator()
@@ -176,6 +177,7 @@ def build_simulation(
         contact_damping=CONTACT_DAMPING,
         steps_between_detection=config.steps_between_detection,
         time_step=config.time_step,
+        broad_phase=broad_phase,
     )
     simulator.operate_block(rod_block).using(
         eaj.AnalyticalLinearDamperJax,
@@ -185,7 +187,9 @@ def build_simulation(
     simulator.finalize()
 
     metadata = eaj.build_block_capsule_metadata(
-        rod_block, n_elements_per_rod=config.n_elements
+        rod_block,
+        n_elements_per_rod=config.n_elements,
+        broad_phase=broad_phase,
     )
     eaj.install_capsule_contact_state(
         rod_block,
@@ -264,6 +268,7 @@ def run_rollout(
     warmup_runs: int,
     n_elements: int = N_ELEMENTS,
     steps_between_detection: int = STEPS_BETWEEN_DETECTION,
+    broad_phase: str = "spatial_hash",
 ) -> BenchmarkTiming:
     """Build the simulator and time a fixed-length Position Verlet rollout."""
     assert steps > 0, "steps must be positive."
@@ -279,7 +284,9 @@ def run_rollout(
 
     with jax.default_device(device):
         instantiate_start = time.perf_counter()
-        simulator, rod_block = build_simulation(config, device=device)
+        simulator, rod_block = build_simulation(
+            config, device=device, broad_phase=broad_phase
+        )
         instantiate_seconds = time.perf_counter() - instantiate_start
 
         stepper = eaj.PositionVerletJAX()

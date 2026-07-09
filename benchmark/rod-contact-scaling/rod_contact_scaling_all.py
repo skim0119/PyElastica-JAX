@@ -61,6 +61,18 @@ def _backend_available(name: str) -> bool:
     default=None,
     help="Override maximum exponent for JAX CUDA sweep.",
 )
+@click.option(
+    "--cpu-old-min-exp",
+    type=int,
+    default=None,
+    help="Override minimum exponent for JAX CPU all-pairs sweep.",
+)
+@click.option(
+    "--cpu-old-max-exp",
+    type=int,
+    default=None,
+    help="Override maximum exponent for JAX CPU all-pairs sweep.",
+)
 @click.option("--steps", type=int, default=200, show_default=True)
 @click.option("--warmup-runs", type=int, default=1, show_default=True)
 @click.option("--n-elements", type=int, default=N_ELEMENTS, show_default=True)
@@ -86,6 +98,11 @@ def _backend_available(name: str) -> bool:
 )
 @click.option("--skip-pyelastica", is_flag=True, help="Skip the PyElastica sweep.")
 @click.option("--skip-cpu", is_flag=True, help="Skip the JAX CPU sweep.")
+@click.option(
+    "--skip-cpu-old",
+    is_flag=True,
+    help="Skip the JAX CPU all-pairs (PyElastica-style) sweep.",
+)
 @click.option("--skip-gpu", is_flag=True, help="Skip the JAX CUDA sweep.")
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
@@ -95,6 +112,8 @@ def main(
     pyelastica_max_exp: int | None,
     cpu_min_exp: int | None,
     cpu_max_exp: int | None,
+    cpu_old_min_exp: int | None,
+    cpu_old_max_exp: int | None,
     gpu_min_exp: int | None,
     gpu_max_exp: int | None,
     steps: int,
@@ -105,12 +124,13 @@ def main(
     csv_output: Path | None,
     skip_pyelastica: bool,
     skip_cpu: bool,
+    skip_cpu_old: bool,
     skip_gpu: bool,
     quiet: bool,
 ) -> None:
     """Sweep rod count and plot all backends on one figure."""
     assert not (
-        skip_pyelastica and skip_cpu and skip_gpu
+        skip_pyelastica and skip_cpu and skip_cpu_old and skip_gpu
     ), "At least one backend must be enabled."
 
     series: dict[str, list[tuple[int, int, float, float]]] = {}
@@ -119,6 +139,8 @@ def main(
     pyelastica_max = max_exp if pyelastica_max_exp is None else pyelastica_max_exp
     cpu_min = min_exp if cpu_min_exp is None else cpu_min_exp
     cpu_max = max_exp if cpu_max_exp is None else cpu_max_exp
+    cpu_old_min = min_exp if cpu_old_min_exp is None else cpu_old_min_exp
+    cpu_old_max = max_exp if cpu_old_max_exp is None else cpu_old_max_exp
     gpu_min = min_exp if gpu_min_exp is None else gpu_min_exp
     gpu_max = max_exp if gpu_max_exp is None else gpu_max_exp
 
@@ -144,6 +166,21 @@ def main(
             warmup_runs=warmup_runs,
             n_elements=n_elements,
             steps_between_detection=steps_between_detection,
+            broad_phase="spatial_hash",
+            verbose=verbose,
+            run_rollout_fn=run_rollout,
+        )
+
+    if not skip_cpu_old:
+        series["jax-cpu-old"] = sweep_backend(
+            backend="cpu",
+            min_exp=cpu_old_min,
+            max_exp=cpu_old_max,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            n_elements=n_elements,
+            steps_between_detection=steps_between_detection,
+            broad_phase="all_pairs",
             verbose=verbose,
             run_rollout_fn=run_rollout,
         )
@@ -160,6 +197,7 @@ def main(
                 warmup_runs=warmup_runs,
                 n_elements=n_elements,
                 steps_between_detection=steps_between_detection,
+                broad_phase="spatial_hash",
                 verbose=verbose,
                 run_rollout_fn=run_rollout,
             )
