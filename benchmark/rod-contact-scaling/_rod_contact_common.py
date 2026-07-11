@@ -96,10 +96,9 @@ class CenterAttractForcesJax(eaj.NoBlockOpJax):
     ) -> None:
         assert _system is not None, "CenterAttractForcesJax requires a finalized block."
         self.attract_strength = attract_strength
-        self.center = jnp.asarray(center, dtype=jnp.float64)
+        self.center = center
 
     def jax_block_operate_synchronize(self, state, time):
-        del time
         positions = state["position_collection"]
         delta = self.center[:, None] - positions
         plane_mask = jnp.array([1.0, 1.0, 0.0], dtype=positions.dtype)[:, None]
@@ -116,16 +115,13 @@ class CenterAttractForcesPy(ea.NoForces):
 
     def __init__(self, *, attract_strength: float, center: np.ndarray) -> None:
         super().__init__()
-        self.attract_strength = float(attract_strength)
-        self.center = np.asarray(center, dtype=np.float64)
+        self.attract_strength = attract_strength
+        self.center = center
 
     def apply_forces(self, system, time: np.float64 = 0.0) -> None:
-        del time
         delta = self.center[:, None] - system.position_collection
         delta[2, :] = 0.0
-        system.external_forces += (
-            self.attract_strength * delta * system.mass[None, :]
-        )
+        system.external_forces += self.attract_strength * delta * system.mass[None, :]
 
 
 def _orthonormal_normal(direction: np.ndarray) -> np.ndarray:
@@ -210,7 +206,9 @@ def build_simulation_pairwise(
     config: ContactScalingConfig,
     *,
     device: jax.Device,
-) -> tuple[ContactScalingPairwiseSimulator, eaj._CosseratRodMemoryBlock, list[ea.CosseratRod]]:
+) -> tuple[
+    ContactScalingPairwiseSimulator, eaj._CosseratRodMemoryBlock, list[ea.CosseratRod]
+]:
     """Build packed rods with PyElastica-style per-pair rod-rod contact."""
     simulator = ContactScalingPairwiseSimulator()
     rod_block = eaj.configure_rod_block(device=device)

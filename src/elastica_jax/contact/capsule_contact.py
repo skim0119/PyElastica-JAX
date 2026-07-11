@@ -314,8 +314,8 @@ class WallContactOp(NoBlockOpJax):
             )
         self._block = _system
         self.metadata = metadata
-        self.wall_origins = np.asarray(wall_origins, dtype=np.float64)
-        self.wall_normals = np.asarray(wall_normals, dtype=np.float64)
+        self.wall_origins = wall_origins
+        self.wall_normals = wall_normals
         self.contact_stiffness = contact_stiffness
         self.contact_damping = contact_damping
 

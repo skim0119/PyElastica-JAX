@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 
-def _jax_get_rotation_matrix(scale, axis_collection):
+def _jax_get_rotation_matrix(
+    scale: jax.Array | float, axis_collection: jax.Array
+) -> jax.Array:
     v0, v1, v2 = axis_collection
     theta = jnp.sqrt(v0 * v0 + v1 * v1 + v2 * v2)
-    theta_eps = theta + jnp.asarray(1.0e-14, dtype=axis_collection.dtype)
+    theta_eps = theta + 1.0e-14
     v0 = v0 / theta_eps
     v1 = v1 / theta_eps
     v2 = v2 / theta_eps
@@ -32,7 +35,7 @@ def _jax_get_rotation_matrix(scale, axis_collection):
     return jnp.stack(entries, axis=0).reshape(3, 3, axis_collection.shape[1])
 
 
-def _jax_inv_rotate(director_collection):
+def _jax_inv_rotate(director_collection: jax.Array) -> jax.Array:
     """Extract relative rotation vectors between consecutive directors.
 
     Notes
@@ -83,8 +86,6 @@ def _jax_inv_rotate(director_collection):
         + nxt[2, 2, :] * current[2, 2, :]
     )
     trace = jnp.clip(trace, -1.0, 3.0)
-    theta = jnp.arccos(0.5 * trace - 0.5) + jnp.asarray(
-        1.0e-14, dtype=director_collection.dtype
-    )
+    theta = jnp.arccos(0.5 * trace - 0.5) + 1.0e-14
     magnitude = -0.5 * theta / jnp.sin(theta)
     return jnp.stack((v0 * magnitude, v1 * magnitude, v2 * magnitude), axis=0)

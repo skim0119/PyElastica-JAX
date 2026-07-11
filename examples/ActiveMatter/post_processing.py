@@ -176,8 +176,6 @@ def _draw_walls_2d(
 ) -> None:
     axis_k = _third_axis(axis_a, axis_b)
     for origin, normal in zip(wall_origins, wall_normals, strict=True):
-        normal = np.asarray(normal, dtype=float)
-        origin = np.asarray(origin, dtype=float)
         normal_norm = np.linalg.norm(normal)
         if normal_norm < 1.0e-12:
             continue

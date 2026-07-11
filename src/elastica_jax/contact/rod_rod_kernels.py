@@ -50,7 +50,7 @@ def find_min_dist_jax(
         def endpoint_search(_: None) -> tuple[jax.Array, jax.Array]:
             potential_t = (x2e1 - x1e1) / jnp.maximum(e1e1, _NORM_EPS)
             t_best = jnp.clip(potential_t, 0.0, 1.0)
-            s_best = jnp.asarray(0.0, dtype=x1.dtype)
+            s_best = jnp.zeros((), dtype=x1.dtype)
             dist_best = _norm(x1 + e1 * t_best - x2)
 
             potential_t = (x2e1 + e1e2 - x1e1) / jnp.maximum(e1e1, _NORM_EPS)
@@ -58,11 +58,7 @@ def find_min_dist_jax(
             dist = _norm(x1 + e1 * potential_t - x2 - e2)
             s_best, t_best, dist_best = jax.lax.cond(
                 dist < dist_best,
-                lambda _: (
-                    jnp.asarray(1.0, dtype=x1.dtype),
-                    potential_t,
-                    dist,
-                ),
+                lambda _: (jnp.ones((), dtype=x1.dtype), potential_t, dist),
                 lambda args: args,
                 (s_best, t_best, dist_best),
             )
@@ -72,7 +68,7 @@ def find_min_dist_jax(
             dist = _norm(x2 + potential_s * e2 - x1)
             s_best, t_best, dist_best = jax.lax.cond(
                 dist < dist_best,
-                lambda _: (potential_s, jnp.asarray(0.0, dtype=x1.dtype), dist),
+                lambda _: (potential_s, jnp.zeros((), dtype=x1.dtype), dist),
                 lambda args: args,
                 (s_best, t_best, dist_best),
             )
@@ -82,11 +78,7 @@ def find_min_dist_jax(
             dist = _norm(x2 + potential_s * e2 - x1 - e1)
             s_best, t_best, _ = jax.lax.cond(
                 dist < dist_best,
-                lambda _: (
-                    potential_s,
-                    jnp.asarray(1.0, dtype=x1.dtype),
-                    dist,
-                ),
+                lambda _: (potential_s, jnp.ones((), dtype=x1.dtype), dist),
                 lambda args: args,
                 (s_best, t_best, dist_best),
             )
@@ -136,7 +128,7 @@ def _scatter_pair_force(
   *,
   is_first_rod: bool,
 ) -> jax.Array:
-    sign = jnp.asarray(1.0 if is_first_rod else -1.0, dtype=external_forces.dtype)
+    sign = 1.0 if is_first_rod else -1.0
     force = sign * net_contact_force
     at_start = node_index == 0
     at_end = node_index == n_elements - 1

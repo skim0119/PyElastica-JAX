@@ -64,18 +64,18 @@ class SurfaceJointSideBySideJax(eaj.NoRodRodBlockOpJax):
         _first_system=None,
         _second_system=None,
     ) -> None:
-        self.k = np.asarray(k, dtype=np.float64)
-        self.nu = np.float64(nu)
-        self.k_repulsive = np.asarray(k_repulsive, dtype=np.float64)
-        self.offset_btw_rods = np.asarray(offset_btw_rods, dtype=np.float64)
-        self.rod_one_direction_vec_in_material_frame = np.asarray(
-            rod_one_direction_vec_in_material_frame, dtype=np.float64
+        self.k = k
+        self.nu = nu
+        self.k_repulsive = k_repulsive
+        self.offset_btw_rods = offset_btw_rods
+        self.rod_one_direction_vec_in_material_frame = (
+            rod_one_direction_vec_in_material_frame
         )
-        self.rod_two_direction_vec_in_material_frame = np.asarray(
-            rod_two_direction_vec_in_material_frame, dtype=np.float64
+        self.rod_two_direction_vec_in_material_frame = (
+            rod_two_direction_vec_in_material_frame
         )
-        self.body_element_index = np.asarray(body_element_index, dtype=np.int32)
-        self.muscle_element_index = np.asarray(muscle_element_index, dtype=np.int32)
+        self.body_element_index = body_element_index
+        self.muscle_element_index = muscle_element_index
 
     def jax_operation(self, rod_one_view, rod_two_view, time):
         del time
@@ -115,11 +115,11 @@ def _apply_surface_joint(
 
     rod_one_to_rod_two_connection_vec = _batch_matvec(
         jnp.transpose(rod_one_view.director_collection[:, :, body_idx], (1, 0, 2)),
-        jnp.asarray(rod_one_direction_vec_in_material_frame),
+        rod_one_direction_vec_in_material_frame,
     )
     rod_two_to_rod_one_connection_vec = _batch_matvec(
         jnp.transpose(rod_two_view.director_collection[:, :, muscle_idx], (1, 0, 2)),
-        jnp.asarray(rod_two_direction_vec_in_material_frame),
+        rod_two_direction_vec_in_material_frame,
     )
 
     rod_one_element_position = 0.5 * (
@@ -132,12 +132,10 @@ def _apply_surface_joint(
     )
 
     offset_rod_one = (
-        0.5 * jnp.asarray(offset_btw_rods) / jnp.sqrt(rod_one_view.dilatation[body_idx])
+        0.5 * offset_btw_rods / jnp.sqrt(rod_one_view.dilatation[body_idx])
     )
     offset_rod_two = (
-        0.5
-        * jnp.asarray(offset_btw_rods)
-        / jnp.sqrt(rod_two_view.dilatation[muscle_idx])
+        0.5 * offset_btw_rods / jnp.sqrt(rod_two_view.dilatation[muscle_idx])
     )
 
     rod_one_rd2 = (
@@ -153,7 +151,7 @@ def _apply_surface_joint(
     surface_position_rod_two = rod_two_element_position + rod_two_rd2
 
     distance_vector = surface_position_rod_two - surface_position_rod_one
-    spring_force = jnp.asarray(k)[None, :] * distance_vector
+    spring_force = k[None, :] * distance_vector
 
     rod_one_element_velocity = 0.5 * (
         rod_one_view.velocity_collection[:, body_idx]
@@ -164,7 +162,7 @@ def _apply_surface_joint(
         + rod_two_view.velocity_collection[:, muscle_idx + 1]
     )
     relative_velocity = rod_two_element_velocity - rod_one_element_velocity
-    damping_force = jnp.asarray(nu) * relative_velocity
+    damping_force = nu * relative_velocity
     total_force = spring_force + damping_force
 
     center_distance = rod_two_element_position - rod_one_element_position
@@ -179,7 +177,7 @@ def _apply_surface_joint(
     )
     k_contact = jnp.where(
         penetration_strain < 0.0,
-        -jnp.asarray(k_repulsive) * jnp.abs(penetration_strain) ** 1.5,
+        -k_repulsive * jnp.abs(penetration_strain) ** 1.5,
         0.0,
     )
     contact_force = k_contact[None, :] * center_distance_unit_vec

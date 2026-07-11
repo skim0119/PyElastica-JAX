@@ -98,8 +98,8 @@ def build_block_capsule_metadata(
         )
     if cell_size is None:
         cell_size = default_cell_size(
-            radii=np.asarray(block.radius[block_element_indices]),
-            lengths=np.asarray(block.lengths[block_element_indices]),
+            radii=block.radius[block_element_indices],
+            lengths=block.lengths[block_element_indices],
         )
     return BlockCapsuleMetadata(
         n_rods=n_rods,
@@ -130,13 +130,13 @@ def initialize_capsule_contact_state(
             np.full(max_pairs, -1, dtype=np.int32), device=device
         ),
         CONTACT_STATE_PAIR_COUNT: jax.device_put(
-            np.asarray(0, dtype=np.int32), device=device
+            np.int32(0), device=device
         ),
         CONTACT_STATE_CANDIDATE_MASK: jax.device_put(
             np.zeros(max_pairs, dtype=bool), device=device
         ),
         CONTACT_STATE_LAST_DETECTION_TIME: jax.device_put(
-            np.asarray(-np.inf, dtype=dtype), device=device
+            np.array(-np.inf, dtype=dtype), device=device
         ),
     }
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Literal, Sequence
+from typing import Any, Callable, Iterable, Iterator, Literal, Sequence, Protocol
 
 import numpy as np
 
@@ -35,14 +35,11 @@ from elastica.rod.data_structures import _RodSymplecticStepperMixin
 from elastica.rod.rod_base import RodBase
 from elastica.typing import RodType, SystemIdxType
 
-try:
-    import jax
-    import jax.numpy as jnp
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without JAX
-    raise ModuleNotFoundError(
-        "MemoryBlockCosseratRodJax requires JAX. Install the optional GPU dependency "
-        'first, for example with `uv add --optional gpu "jax[cuda13]"`.'
-    ) from exc
+from .protocol import RodViewMetadata
+
+import jax
+import jax.numpy as jnp
+
 
 
 _NODE_ATTRS: tuple[str, ...] = (
@@ -107,25 +104,29 @@ class JAXRodViewMetadata:
 class JAXRodView:
     """Rod-local facade over explicit block state for JAX operator kernels."""
 
+    _state: dict[str, Any]
+    _metadata: RodViewMetadata
+    _updates: dict[str, Any]
+
     def __init__(
         self,
-        state: dict[str, object],
-        metadata: JAXRodViewMetadata,
+        state: dict[str, Any],
+        metadata: RodViewMetadata,
         *,
-        updates: dict[str, object] | None = None,
+        updates: dict[str, Any] | None = None,
     ) -> None:
         object.__setattr__(self, "_state", state)
         object.__setattr__(self, "_metadata", metadata)
         object.__setattr__(self, "_updates", {} if updates is None else updates)
 
-    def __getattr__(self, attr: str) -> object:
+    def __getattr__(self, attr: str) -> Any:
         if attr.startswith("_"):
             raise AttributeError(attr)
         source = self._updates.get(attr, self._state[attr])
         attr_slice = self._metadata.slice_for_attr(attr)
         return source[..., attr_slice]
 
-    def __setattr__(self, attr: str, value: object) -> None:
+    def __setattr__(self, attr: str, value: Any) -> None:
         if attr.startswith("_"):
             object.__setattr__(self, attr, value)
             return
@@ -133,7 +134,7 @@ class JAXRodView:
         attr_slice = self._metadata.slice_for_attr(attr)
         self._updates[attr] = base.at[..., attr_slice].set(value)
 
-    def commit(self) -> dict[str, object]:
+    def commit(self) -> dict[str, Any]:
         updated = dict(self._state)
         updated.update(self._updates)
         return updated
@@ -144,9 +145,7 @@ def _jax_reset_vector_ghost(
 ) -> jax.Array:
     if ghost_idx.size == 0:
         return input_array
-    return input_array.at[:, ghost_idx].set(
-        jnp.asarray(reset_value, dtype=input_array.dtype)
-    )
+    return input_array.at[:, ghost_idx].set(reset_value)
 
 
 def _jax_reset_scalar_ghost(
@@ -154,9 +153,7 @@ def _jax_reset_scalar_ghost(
 ) -> jax.Array:
     if ghost_idx.size == 0:
         return input_array
-    return input_array.at[ghost_idx].set(
-        jnp.asarray(reset_value, dtype=input_array.dtype)
-    )
+    return input_array.at[ghost_idx].set(reset_value)
 
 
 def _jax_sync_periodic_vector(
@@ -250,13 +247,9 @@ def _jax_compute_internal_forces_and_torques(
 ) -> tuple[jax.Array, ...]:
     # Compute Geometry
     position_diff = _jax_position_difference(position_collection)
-    lengths = jnp.sqrt(jnp.sum(position_diff * position_diff, axis=0)) + jnp.asarray(
-        1.0e-14, dtype=position_collection.dtype
-    )
+    lengths = jnp.sqrt(jnp.sum(position_diff * position_diff, axis=0)) + 1.0e-14
     tangents = position_diff / lengths[jnp.newaxis, :]
-    radius = jnp.sqrt(
-        volume / lengths / jnp.asarray(jnp.pi, dtype=position_collection.dtype)
-    )
+    radius = jnp.sqrt(volume / lengths / jnp.pi)
     dilatation = lengths / rest_lengths
     voronoi_dilatation = _jax_position_average(lengths) / rest_voronoi_lengths
 
@@ -865,14 +858,15 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
                 raise KeyError(variable)
 
     def _normalize_rod_sync_target(self, rods: RodSyncTarget) -> tuple[RodType, ...]:
-        assert hasattr(
-            self, "_systems"
-        ), "Block must be built before synchronizing with rods."
+        assert hasattr(self, "_systems"), (
+            "Block must be built before synchronizing with rods."
+        )
         if rods == "all":
             return self._systems
         if isinstance(rods, (list, tuple)):
             return tuple(rods)
-        return (rods,)
+        single_rod: RodType = rods  # type: ignore[assignment]
+        return (single_rod,)
 
     def _resolve_system_indices(self, rods: Sequence[RodType]) -> list[int]:
         indices: list[int] = []
@@ -1047,7 +1041,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
 
     def _device_scalar(self, value: float | np.floating) -> jax.Array:
         return jax.device_put(
-            jnp.asarray(value, dtype=self._device_dtype),
+            self._device_dtype.type(value),
             device=self.position_collection_device.device,
         )
 
@@ -1132,7 +1126,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["director_collection"],
             state["velocity_collection"],
             state["omega_collection"],
-            jnp.asarray(prefac, dtype=self._device_dtype),
+            self._device_dtype.type(prefac),
         )
         updated = dict(state)
         updated["position_collection"] = position_collection
@@ -1222,7 +1216,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["omega_collection"],
             acceleration_collection,
             alpha_collection,
-            jnp.asarray(dt, dtype=self._device_dtype),
+            self._device_dtype.type(dt),
         )
         updated = dict(state)
         updated["acceleration_collection"] = acceleration_collection

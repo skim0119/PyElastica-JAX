@@ -112,13 +112,9 @@ def _jax_compute_internal_forces_and_torques_one_rod(
 ) -> tuple[jax.Array, ...]:
     """Single straight-rod force/torque kernel (no ghosts, no periodic BC)."""
     position_diff = _jax_position_difference(position_collection)
-    lengths = jnp.sqrt(jnp.sum(position_diff * position_diff, axis=0)) + jnp.asarray(
-        1.0e-14, dtype=position_collection.dtype
-    )
+    lengths = jnp.sqrt(jnp.sum(position_diff * position_diff, axis=0)) + 1.0e-14
     tangents = position_diff / lengths[jnp.newaxis, :]
-    radius = jnp.sqrt(
-        volume / lengths / jnp.asarray(jnp.pi, dtype=position_collection.dtype)
-    )
+    radius = jnp.sqrt(volume / lengths / jnp.pi)
     dilatation = lengths / rest_lengths
     voronoi_dilatation = _jax_position_average(lengths) / rest_voronoi_lengths
 
@@ -642,7 +638,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["director_collection"],
             state["velocity_collection"],
             state["omega_collection"],
-            jnp.asarray(prefac, dtype=self._device_dtype),
+            self._device_dtype.type(prefac),
         )
         updated = dict(state)
         updated["position_collection"] = position_collection
@@ -728,7 +724,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["omega_collection"],
             acceleration_collection,
             alpha_collection,
-            jnp.asarray(dt, dtype=self._device_dtype),
+            self._device_dtype.type(dt),
         )
         updated = dict(state)
         updated["acceleration_collection"] = acceleration_collection

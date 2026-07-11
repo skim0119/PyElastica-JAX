@@ -37,45 +37,35 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
             wave_number=2.0 * np.pi / float(b_coeff[-1]),
             phase_shift=0.0,
             direction=np.array([0.0, 1.0, 0.0]),
-            rest_lengths=np.asarray(template_rod.rest_lengths),
+            rest_lengths=template_rod.rest_lengths,
             ramp_up_time=period,
             with_spline=True,
         )
-        self.direction = jnp.asarray(np.array([0.0, 1.0, 0.0], dtype=np.float64))
-        self.s = jnp.asarray(np.asarray(template.s, dtype=np.float64))
-        self.spline = jnp.asarray(np.asarray(template.my_spline, dtype=np.float64))
-        self.angular_frequency = np.float64(2.0 * np.pi / period)
-        self.wave_number = np.float64(2.0 * np.pi / float(b_coeff[-1]))
-        self.phase_shift = np.float64(0.0)
-        self.ramp_up_time = np.float64(period)
+        self.direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        self.s = template.s
+        self.spline = template.my_spline
+        self.angular_frequency = 2.0 * np.pi / period
+        self.wave_number = 2.0 * np.pi / float(b_coeff[-1])
+        self.phase_shift = 0.0
+        self.ramp_up_time = period
 
     def jax_block_operate_synchronize(
         self,
         state: dict[str, jax.Array],
         time: np.float64,
     ) -> dict[str, jax.Array]:
-        dtype = state["director_collection"].dtype
         directors = state["director_collection"]
-        factor = jnp.minimum(
-            jnp.asarray(1.0, dtype=dtype),
-            jnp.asarray(time, dtype=dtype)
-            / jnp.asarray(self.ramp_up_time, dtype=dtype),
-        )
+        factor = jnp.minimum(1.0, time / self.ramp_up_time)
         torque_mag = (
             factor
-            * jnp.asarray(self.spline, dtype=dtype)
+            * self.spline
             * jnp.sin(
-                jnp.asarray(self.angular_frequency, dtype=dtype)
-                * jnp.asarray(time, dtype=dtype)
-                - jnp.asarray(self.wave_number, dtype=dtype)
-                * jnp.asarray(self.s, dtype=dtype)
-                + jnp.asarray(self.phase_shift, dtype=dtype)
+                self.angular_frequency * time
+                - self.wave_number * self.s
+                + self.phase_shift
             )
         )
-        torque_local = (
-            jnp.asarray(self.direction, dtype=dtype)[:, None]
-            * torque_mag[::-1][None, :]
-        )
+        torque_local = self.direction[:, None] * torque_mag[::-1][None, :]
         torque_world = _jax_batch_matvec(directors, torque_local)
         external_torques = state["external_torques"]
         external_torques = external_torques.at[:, 1:].add(torque_world[:, 1:])
@@ -105,25 +95,22 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         static_mu_array: np.ndarray,
         _system,
     ) -> None:
-        del static_mu_array, _system
-        self.plane_origin = jnp.asarray(np.asarray(plane_origin, dtype=np.float64))
-        self.plane_normal = jnp.asarray(np.asarray(plane_normal, dtype=np.float64))
-        self.gravity = jnp.asarray(np.array([0.0, -9.80665, 0.0], dtype=np.float64))
-        self.surface_tol = np.float64(1.0e-4)
-        self.slip_velocity_tol = np.float64(slip_velocity_tol)
-        self.k = np.float64(k)
-        self.nu = np.float64(nu)
-        self.kinetic_mu_forward = np.float64(kinetic_mu_array[0])
-        self.kinetic_mu_backward = np.float64(kinetic_mu_array[1])
-        self.kinetic_mu_sideways = np.float64(kinetic_mu_array[2])
+        self.plane_origin = plane_origin
+        self.plane_normal = plane_normal
+        self.gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
+        self.surface_tol = 1.0e-4
+        self.slip_velocity_tol = slip_velocity_tol
+        self.k = k
+        self.nu = nu
+        self.kinetic_mu_forward = kinetic_mu_array[0]
+        self.kinetic_mu_backward = kinetic_mu_array[1]
+        self.kinetic_mu_sideways = kinetic_mu_array[2]
 
     def jax_block_operate_synchronize(
         self,
         state: dict[str, jax.Array],
         time: np.float64,
     ) -> dict[str, jax.Array]:
-        del time
-        dtype = state["position_collection"].dtype
         position = state["position_collection"]
         velocity = state["velocity_collection"]
         mass = state["mass"]
@@ -135,13 +122,11 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         external_forces = state["external_forces"]
         external_torques = state["external_torques"]
 
-        external_forces = (
-            external_forces + jnp.asarray(self.gravity, dtype=dtype)[:, None] * mass
-        )
+        external_forces = external_forces + self.gravity[:, None] * mass
 
         nodal_total_forces = internal_forces + external_forces
         element_total_forces = _node_to_element_mass_or_force(nodal_total_forces)
-        plane_normal = jnp.asarray(self.plane_normal, dtype=dtype)[:, None]
+        plane_normal = self.plane_normal[:, None]
         force_component_along_normal_direction = jnp.sum(
             plane_normal * element_total_forces, axis=0
         )
@@ -157,29 +142,20 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
 
         element_position = _node_to_element_position(position)
         distance_from_plane = jnp.sum(
-            plane_normal
-            * (element_position - jnp.asarray(self.plane_origin, dtype=dtype)[:, None]),
+            plane_normal * (element_position - self.plane_origin[:, None]),
             axis=0,
         )
         plane_penetration = jnp.minimum(distance_from_plane - radius, 0.0)
-        elastic_force = (
-            -jnp.asarray(self.k, dtype=dtype) * plane_normal * plane_penetration
-        )
+        elastic_force = -self.k * plane_normal * plane_penetration
         element_velocity = _node_to_element_velocity(mass, velocity)
         normal_component_of_element_velocity = jnp.sum(
             plane_normal * element_velocity, axis=0
         )
-        damping_force = (
-            -jnp.asarray(self.nu, dtype=dtype)
-            * plane_normal
-            * normal_component_of_element_velocity
-        )
+        damping_force = -self.nu * plane_normal * normal_component_of_element_velocity
         plane_response_force_total = (
             plane_response_force + elastic_force + damping_force
         )
-        no_contact = (distance_from_plane - radius) > jnp.asarray(
-            self.surface_tol, dtype=dtype
-        )
+        no_contact = (distance_from_plane - radius) > self.surface_tol
         plane_response_force = jnp.where(no_contact, 0.0, plane_response_force)
         plane_response_force_total = jnp.where(
             no_contact, 0.0, plane_response_force_total
@@ -194,7 +170,7 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
             tangent_perpendicular_to_normal_direction, axis=0
         )
         axial_direction = tangent_perpendicular_to_normal_direction / (
-            tangent_perpendicular_mag + jnp.asarray(1.0e-14, dtype=dtype)
+            tangent_perpendicular_mag + 1.0e-14
         )
         element_velocity = _node_to_element_velocity(mass, velocity)
         velocity_mag_along_axial_direction = jnp.sum(
@@ -207,10 +183,8 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
             velocity_mag_along_axial_direction
         )
         kinetic_mu = 0.5 * (
-            jnp.asarray(self.kinetic_mu_forward, dtype=dtype)
-            * (1.0 + velocity_sign_along_axial_direction)
-            + jnp.asarray(self.kinetic_mu_backward, dtype=dtype)
-            * (1.0 - velocity_sign_along_axial_direction)
+            self.kinetic_mu_forward * (1.0 + velocity_sign_along_axial_direction)
+            + self.kinetic_mu_backward * (1.0 - velocity_sign_along_axial_direction)
         )
         rolling_direction = _jax_batch_cross(
             axial_direction,
@@ -240,11 +214,11 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         )
         slip_function_along_axial_direction = _find_slipping_elements(
             velocity_along_axial_direction,
-            jnp.asarray(self.slip_velocity_tol, dtype=dtype),
+            self.slip_velocity_tol,
         )
         slip_function_along_rolling_direction = _find_slipping_elements(
             slip_velocity_along_rolling_direction,
-            jnp.asarray(self.slip_velocity_tol, dtype=dtype),
+            self.slip_velocity_tol,
         )
         unitized_total_velocity = (
             slip_velocity_along_rolling_direction + velocity_along_axial_direction
@@ -266,7 +240,7 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         )
         kinetic_friction_force_along_rolling_direction = (
             -(1.0 - slip_function_along_rolling_direction)
-            * jnp.asarray(self.kinetic_mu_sideways, dtype=dtype)
+            * self.kinetic_mu_sideways
             * plane_response_force_mag
             * jnp.sum(unitized_total_velocity * rolling_direction, axis=0)
             * rolling_direction

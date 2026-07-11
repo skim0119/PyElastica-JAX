@@ -53,7 +53,6 @@ def estimate_all_cross_rod_pairs(rod_ids: np.ndarray) -> int:
     This matches the PyElastica rod-rod registration cost for a packed block:
     every cross-rod element pair may enter the broad phase.
     """
-    rod_ids = np.asarray(rod_ids)
     n_capsules = int(rod_ids.size)
     assert n_capsules >= 0, "rod_ids must be nonempty or empty."
     if n_capsules < 2:
@@ -117,8 +116,8 @@ def rebuild_all_pairs(
     buffer_second = np.full(max_pairs, -1, dtype=np.int32)
     pair_count = len(pair_first)
     if pair_count > 0:
-        buffer_first[:pair_count] = np.asarray(pair_first, dtype=np.int32)
-        buffer_second[:pair_count] = np.asarray(pair_second, dtype=np.int32)
+        buffer_first[:pair_count] = pair_first
+        buffer_second[:pair_count] = pair_second
     return SpatialHashPairBuffer(
         pair_first=buffer_first,
         pair_second=buffer_second,
@@ -232,8 +231,8 @@ def rebuild_spatial_hash_pairs(
     buffer_second = np.full(max_pairs, -1, dtype=np.int32)
     pair_count = len(pair_first)
     if pair_count > 0:
-        buffer_first[:pair_count] = np.asarray(pair_first, dtype=np.int32)
-        buffer_second[:pair_count] = np.asarray(pair_second, dtype=np.int32)
+        buffer_first[:pair_count] = pair_first
+        buffer_second[:pair_count] = pair_second
     return SpatialHashPairBuffer(
         pair_first=buffer_first,
         pair_second=buffer_second,

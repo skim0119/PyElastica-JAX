@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import jax
-import jax.numpy as jnp
-
 from elastica_jax.contact.rod_rod_kernels import apply_rod_rod_contact_forces
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 
@@ -21,7 +18,7 @@ class RodRodContactJax(NoRodRodBlockOpJax):
         Contact spring constant.
     nu : float
         Contact damping constant.
-  """
+    """
 
     def __init__(
         self,
@@ -31,12 +28,10 @@ class RodRodContactJax(NoRodRodBlockOpJax):
         _first_system=None,
         _second_system=None,
     ) -> None:
-        del _first_system, _second_system
-        self.contact_k = jnp.asarray(k, dtype=jnp.float64)
-        self.contact_nu = jnp.asarray(nu, dtype=jnp.float64)
+        self.contact_k = k
+        self.contact_nu = nu
 
     def jax_operation(self, rod_one_view, rod_two_view, time):
-        del time
         updated_one, updated_two = apply_rod_rod_contact_forces(
             x_one=rod_one_view.position_collection[:, :-1],
             radius_one=rod_one_view.radius,

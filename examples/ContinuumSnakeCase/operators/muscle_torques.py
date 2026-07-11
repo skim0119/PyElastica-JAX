@@ -35,14 +35,14 @@ class SnakeMuscleTorquesJax(eaj.NoOpsJax):
             ramp_up_time=period,
             with_spline=True,
         )
-        self.gravity = np.asarray([0.0, gravitational_acc, 0.0], dtype=np.float64)
-        self.muscle_direction = np.asarray([0.0, 1.0, 0.0], dtype=np.float64)
-        self.muscle_s = np.asarray(torque_template.s, dtype=np.float64)
-        self.muscle_spline = np.asarray(torque_template.my_spline, dtype=np.float64)
-        self.muscle_angular_frequency = np.float64(2.0 * np.pi / period)
-        self.muscle_wave_number = np.float64(2.0 * np.pi / float(b_coeff[-1]))
-        self.muscle_phase_shift = np.float64(0.0)
-        self.muscle_ramp_up_time = np.float64(period)
+        self.gravity = np.array([0.0, gravitational_acc, 0.0], dtype=np.float64)
+        self.muscle_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        self.muscle_s = torque_template.s
+        self.muscle_spline = torque_template.my_spline
+        self.muscle_angular_frequency = 2.0 * np.pi / period
+        self.muscle_wave_number = 2.0 * np.pi / float(b_coeff[-1])
+        self.muscle_phase_shift = 0.0
+        self.muscle_ramp_up_time = period
 
     def jax_operate_synchronize(self, rod_view, time):
         external_forces, external_torques = _apply_gravity_and_muscle_torques(

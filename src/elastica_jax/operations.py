@@ -56,10 +56,10 @@ class OneEndFixedJax(NoOpsJax):
     """JAX equivalent of fixing the first node and first director."""
 
     def __init__(self, *, _system: object) -> None:
-        self.fixed_position_collection: JAXVectorArray = np.asarray(
+        self.fixed_position_collection: JAXVectorArray = (
             _system.position_collection[..., 0].copy()
         )
-        self.fixed_directors_collection: np.ndarray = np.asarray(
+        self.fixed_directors_collection: np.ndarray = (
             _system.director_collection[..., 0].copy()
         )
 
@@ -103,25 +103,21 @@ class EndpointForcesJax(NoOpsJax):
     ) -> None:
         del _system
         assert ramp_up_time > 0.0, "ramp_up_time must be positive."
-        self.start_force: JAXVectorArray = np.asarray(start_force, dtype=np.float64)
-        self.end_force: JAXVectorArray = np.asarray(end_force, dtype=np.float64)
-        self.ramp_up_time: np.float64 = np.float64(ramp_up_time)
+        self.start_force = start_force
+        self.end_force = end_force
+        self.ramp_up_time = ramp_up_time
 
     def jax_operate_synchronize(
         self,
         rod_view: JAXRodView,
         time: JAXTime,
     ) -> JAXRodView:
-        factor = jnp.minimum(
-            jnp.asarray(1.0, dtype=rod_view.external_forces.dtype),
-            jnp.asarray(time, dtype=rod_view.external_forces.dtype)
-            / jnp.asarray(self.ramp_up_time, dtype=rod_view.external_forces.dtype),
-        )
+        factor = jnp.minimum(1.0, time / self.ramp_up_time)
         rod_view.external_forces = rod_view.external_forces.at[:, 0].add(
-            jnp.asarray(self.start_force, dtype=rod_view.external_forces.dtype) * factor
+            self.start_force * factor
         )
         rod_view.external_forces = rod_view.external_forces.at[:, -1].add(
-            jnp.asarray(self.end_force, dtype=rod_view.external_forces.dtype) * factor
+            self.end_force * factor
         )
         return rod_view
 
@@ -144,7 +140,7 @@ class GravityForcesJax(NoOpsJax):
     ) -> None:
         if acc_gravity is None:
             acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
-        self.acc_gravity: JAXVectorArray = np.asarray(acc_gravity, dtype=np.float64)
+        self.acc_gravity = acc_gravity
 
     def jax_operate_synchronize(
         self,
@@ -227,15 +223,11 @@ class AnalyticalLinearDamperJax(NoOpsJax):
         time: JAXTime,
     ) -> JAXRodView:
         del time
-        rod_view.velocity_collection = rod_view.velocity_collection * jnp.asarray(
-            self._translational_damping_coefficient,
-            dtype=rod_view.velocity_collection.dtype,
+        rod_view.velocity_collection = (
+            rod_view.velocity_collection * self._translational_damping_coefficient
         )
         rod_view.omega_collection = rod_view.omega_collection * jnp.power(
-            jnp.asarray(
-                self._rotational_damping_coefficient,
-                dtype=rod_view.omega_collection.dtype,
-            ),
+            self._rotational_damping_coefficient,
             rod_view.dilatation,
         )
         return rod_view
@@ -259,7 +251,7 @@ class GravityAnalyticalDamperJax(NoOpsJax):
     ) -> None:
         if acc_gravity is None:
             acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
-        self.acc_gravity: JAXVectorArray = np.asarray(acc_gravity)
+        self.acc_gravity = acc_gravity
 
         provided_params = [
             p
@@ -335,7 +327,7 @@ class GravityAnalyticalDamperJax(NoOpsJax):
             rod_view.velocity_collection * self._translational_damping_coefficient
         )
         rod_view.omega_collection = rod_view.omega_collection * jnp.power(
-            jnp.asarray(self._rotational_damping_coefficient),
+            self._rotational_damping_coefficient,
             rod_view.dilatation,
         )
         return rod_view

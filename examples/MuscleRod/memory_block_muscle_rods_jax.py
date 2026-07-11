@@ -22,7 +22,7 @@ import jax.numpy as jnp
 def _reset_vector_ghosts(array: jax.Array, ghost_idx: jax.Array) -> jax.Array:
     if ghost_idx.size == 0:
         return array
-    return array.at[..., ghost_idx].set(jnp.asarray(0.0, dtype=array.dtype))
+    return array.at[..., ghost_idx].set(0.0)
 
 
 @jax.jit
@@ -230,7 +230,7 @@ class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
     ) -> dict[str, jax.Array]:
         updated = super().jax_compute_internal_forces_and_torques(state, time)
         muscle_forces, muscle_torques = _jax_compute_muscle_loads(
-            jnp.asarray(time, dtype=self._device_dtype),
+            self._device_dtype.type(time),
             updated["radius"],
             updated["sigma"],
             updated["kappa"],

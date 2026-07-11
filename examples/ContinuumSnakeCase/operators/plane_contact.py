@@ -35,18 +35,18 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         _system,
     ) -> None:
         del _system
-        self.plane_origin = np.asarray(plane_origin, dtype=np.float64)
-        self.plane_normal = np.asarray(plane_normal, dtype=np.float64)
-        self.surface_tol = np.float64(1.0e-4)
-        self.slip_velocity_tol = np.float64(slip_velocity_tol)
-        self.k = np.float64(k)
-        self.nu = np.float64(nu)
-        self.kinetic_mu_forward = np.float64(kinetic_mu_array[0])
-        self.kinetic_mu_backward = np.float64(kinetic_mu_array[1])
-        self.kinetic_mu_sideways = np.float64(kinetic_mu_array[2])
-        self.static_mu_forward = np.float64(static_mu_array[0])
-        self.static_mu_backward = np.float64(static_mu_array[1])
-        self.static_mu_sideways = np.float64(static_mu_array[2])
+        self.plane_origin = plane_origin
+        self.plane_normal = plane_normal
+        self.surface_tol = 1.0e-4
+        self.slip_velocity_tol = slip_velocity_tol
+        self.k = k
+        self.nu = nu
+        self.kinetic_mu_forward = kinetic_mu_array[0]
+        self.kinetic_mu_backward = kinetic_mu_array[1]
+        self.kinetic_mu_sideways = kinetic_mu_array[2]
+        self.static_mu_forward = static_mu_array[0]
+        self.static_mu_backward = static_mu_array[1]
+        self.static_mu_sideways = static_mu_array[2]
 
     def jax_operate_synchronize(self, rod_view, time):
         del time

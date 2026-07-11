@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Sequence
+from typing import Any, Iterable, Literal, Sequence
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from elastica_jax._linalg import _jax_batch_cross, _jax_batch_matmul, _jax_batch_matvec
@@ -13,14 +15,6 @@ from elastica.rigidbody import RigidBodyBase
 from elastica.rigidbody.data_structures import _RigidRodSymplecticStepperMixin
 from elastica.typing import RigidBodyType, SystemIdxType
 
-try:
-    import jax
-    import jax.numpy as jnp
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without JAX
-    raise ModuleNotFoundError(
-        "MemoryBlockRigidBodyJax requires JAX. Install the optional GPU dependency "
-        'first, for example with `uv add --optional gpu "jax[cuda13]"`.'
-    ) from exc
 
 
 _SCALAR_ATTRS: tuple[str, ...] = ("density", "volume", "mass")
@@ -55,25 +49,29 @@ class JAXRigidBodyViewMetadata:
 class JAXRigidBodyView:
     """Rigid-body-local facade over explicit block state for JAX operator kernels."""
 
+    _state: dict[str, Any]
+    _metadata: JAXRigidBodyViewMetadata
+    _updates: dict[str, Any]
+
     def __init__(
         self,
-        state: dict[str, object],
+        state: dict[str, Any],
         metadata: JAXRigidBodyViewMetadata,
         *,
-        updates: dict[str, object] | None = None,
+        updates: dict[str, Any] | None = None,
     ) -> None:
         object.__setattr__(self, "_state", state)
         object.__setattr__(self, "_metadata", metadata)
         object.__setattr__(self, "_updates", {} if updates is None else dict(updates))
 
-    def __getattr__(self, attr: str) -> object:
+    def __getattr__(self, attr: str) -> Any:
         if attr.startswith("_"):
             raise AttributeError(attr)
         source = self._updates.get(attr, self._state[attr])
         attr_slice = self._metadata.slice_for_attr(attr)
         return source[..., attr_slice]
 
-    def __setattr__(self, attr: str, value: object) -> None:
+    def __setattr__(self, attr: str, value: Any) -> None:
         if attr.startswith("_"):
             object.__setattr__(self, attr, value)
             return
@@ -81,7 +79,7 @@ class JAXRigidBodyView:
         attr_slice = self._metadata.slice_for_attr(attr)
         self._updates[attr] = base.at[..., attr_slice].set(value)
 
-    def commit(self) -> dict[str, object]:
+    def commit(self) -> dict[str, Any]:
         updated = dict(self._state)
         updated.update(self._updates)
         return updated
@@ -192,9 +190,11 @@ class MemoryBlockRigidBodyJax(RigidBodyBase, _RigidRodSymplecticStepperMixin):
     @staticmethod
     def _normalize_device_dtype(device_dtype: str | np.dtype | None) -> np.dtype:
         if device_dtype is None:
-            return np.dtype(np.float64 if jax.config.x64_enabled else np.float32)
+            return np.dtype(
+                np.float64 if jax.config.x64_enabled else np.float32  # type: ignore[attr-defined]
+            )
         normalized = np.dtype(device_dtype)
-        if normalized == np.dtype(np.float64) and not jax.config.x64_enabled:
+        if normalized == np.dtype(np.float64) and not jax.config.x64_enabled:  # type: ignore[attr-defined]
             raise ValueError(
                 "float64 device_dtype requires JAX x64 support. Enable it with "
                 '`jax.config.update("jax_enable_x64", True)` or use float32.'
@@ -407,7 +407,7 @@ class MemoryBlockRigidBodyJax(RigidBodyBase, _RigidRodSymplecticStepperMixin):
             state["director_collection"],
             state["velocity_collection"],
             state["omega_collection"],
-            jnp.asarray(prefac, dtype=self._device_dtype),
+            self._device_dtype.type(prefac),
         )
         updated = dict(state)
         updated["position_collection"] = position_collection
@@ -440,7 +440,7 @@ class MemoryBlockRigidBodyJax(RigidBodyBase, _RigidRodSymplecticStepperMixin):
             state["omega_collection"],
             acceleration_collection,
             alpha_collection,
-            jnp.asarray(dt, dtype=self._device_dtype),
+            self._device_dtype.type(dt),
         )
         updated = dict(state)
         updated["acceleration_collection"] = acceleration_collection

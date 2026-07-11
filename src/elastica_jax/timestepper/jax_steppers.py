@@ -153,8 +153,8 @@ class PositionVerletJAX:
         if cache_key in self._compiled_rollout_cache:
             return self._compiled_rollout_cache[cache_key]
 
-        dt_jax = jnp.asarray(simulation_dt, dtype=reference_dtype)
-        half_dt_jax = jnp.asarray(0.5 * simulation_dt, dtype=reference_dtype)
+        dt_jax = reference_dtype.type(simulation_dt)
+        half_dt_jax = reference_dtype.type(0.5 * simulation_dt)
 
         def body_fn(step_idx: int, carry):  # type: ignore[no-untyped-def]
             return self._body_fn(
@@ -204,8 +204,8 @@ class PositionVerletJAX:
         if cache_key in self._compiled_rollout_cache:
             return self._compiled_rollout_cache[cache_key]
 
-        dt_jax = jnp.asarray(simulation_dt, dtype=reference_dtype)
-        half_dt_jax = jnp.asarray(0.5 * simulation_dt, dtype=reference_dtype)
+        dt_jax = reference_dtype.type(simulation_dt)
+        half_dt_jax = reference_dtype.type(0.5 * simulation_dt)
 
         def body_fn(step_idx: int, carry):  # type: ignore[no-untyped-def]
             return self._block_body_fn(
@@ -301,7 +301,7 @@ class PositionVerletJAX:
         reference_dtype = self._reference_dtype_from_states((state,))
         reference_device = self._reference_device_from_states((system,), (state,))
         time_jax = jax.device_put(
-            np.asarray(simulation_time, dtype=reference_dtype),
+            reference_dtype.type(simulation_time),
             device=reference_device,
         )
         compiled_rollout = self._get_compiled_block_rollout(
@@ -432,7 +432,7 @@ class PositionVerletJAX:
         )
         reference_device = self._reference_device_from_states(systems, states)
         time_jax = jax.device_put(
-            np.asarray(simulation_time, dtype=reference_dtype),
+            reference_dtype.type(simulation_time),
             device=reference_device,
         )
         final_time_jax, final_states = compiled_rollout(time_jax, states)

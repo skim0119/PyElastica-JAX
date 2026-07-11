@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 
-def _jax_reset_vector_ghost(input_array, ghost_idx, reset_value: float = 0.0):
+def _jax_reset_vector_ghost(
+    input_array: jax.Array,
+    ghost_idx: jax.Array,
+    reset_value: float = 0.0,
+) -> jax.Array:
     if ghost_idx.size == 0:
         return input_array
-    return input_array.at[:, ghost_idx].set(
-        jnp.asarray(reset_value, dtype=input_array.dtype)
-    )
+    return input_array.at[:, ghost_idx].set(reset_value)
 
 
-def _jax_trapezoidal(array_collection):
+def _jax_trapezoidal(array_collection: jax.Array) -> jax.Array:
     blocksize = array_collection.shape[1]
     temp_collection = jnp.zeros((3, blocksize + 1), dtype=array_collection.dtype)
     temp_collection = temp_collection.at[:, 0].set(0.5 * array_collection[:, 0])
@@ -26,12 +29,14 @@ def _jax_trapezoidal(array_collection):
     return temp_collection
 
 
-def _jax_trapezoidal_for_block_structure(array_collection, ghost_idx):
+def _jax_trapezoidal_for_block_structure(
+    array_collection: jax.Array, ghost_idx: jax.Array
+) -> jax.Array:
     array_collection = _jax_reset_vector_ghost(array_collection, ghost_idx)
     return _jax_trapezoidal(array_collection)
 
 
-def _jax_two_point_difference(array_collection):
+def _jax_two_point_difference(array_collection: jax.Array) -> jax.Array:
     blocksize = array_collection.shape[1]
     temp_collection = jnp.zeros((3, blocksize + 1), dtype=array_collection.dtype)
     temp_collection = temp_collection.at[:, 0].set(array_collection[:, 0])
@@ -44,16 +49,18 @@ def _jax_two_point_difference(array_collection):
     return temp_collection
 
 
-def _jax_two_point_difference_for_block_structure(array_collection, ghost_idx):
+def _jax_two_point_difference_for_block_structure(
+    array_collection: jax.Array, ghost_idx: jax.Array
+) -> jax.Array:
     array_collection = _jax_reset_vector_ghost(array_collection, ghost_idx)
     return _jax_two_point_difference(array_collection)
 
 
-def _jax_difference(vector):
+def _jax_difference(vector: jax.Array) -> jax.Array:
     return vector[:, 1:] - vector[:, :-1]
 
 
-def _jax_average(vector):
+def _jax_average(vector: jax.Array) -> jax.Array:
     return 0.5 * (vector[1:] + vector[:-1])
 
 

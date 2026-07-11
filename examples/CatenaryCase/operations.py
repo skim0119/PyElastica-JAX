@@ -70,15 +70,15 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
         n_nodes = _system.position_collection.shape[1]
         n_elems = _system.director_collection.shape[2]
         self.fixed_positions = {
-            idx if idx >= 0 else n_nodes + idx: np.asarray(
-                _system.position_collection[..., idx].copy()
-            )
+            idx if idx >= 0 else n_nodes + idx: _system.position_collection[
+                ..., idx
+            ].copy()
             for idx in constrained_position_idx
         }
         self.fixed_directors = {
-            idx if idx >= 0 else n_elems + idx: np.asarray(
-                _system.director_collection[..., idx].copy()
-            )
+            idx if idx >= 0 else n_elems + idx: _system.director_collection[
+                ..., idx
+            ].copy()
             for idx in constrained_director_idx
         }
 

@@ -226,7 +226,7 @@ def rebuild_spatial_hash_pairs_jax(
     n = centers.shape[0]
     empty_first = jnp.full(max_pairs, -1, dtype=jnp.int32)
     empty_second = jnp.full(max_pairs, -1, dtype=jnp.int32)
-    empty_count = jnp.asarray(0, dtype=jnp.int32)
+    empty_count = jnp.int32(0)
     if n == 0:
         return empty_first, empty_second, empty_count
 
@@ -301,7 +301,7 @@ def rebuild_all_pairs_jax(
     n = centers.shape[0]
     empty_first = jnp.full(max_pairs, -1, dtype=jnp.int32)
     empty_second = jnp.full(max_pairs, -1, dtype=jnp.int32)
-    empty_count = jnp.asarray(0, dtype=jnp.int32)
+    empty_count = jnp.int32(0)
     if n < 2:
         return empty_first, empty_second, empty_count
 
