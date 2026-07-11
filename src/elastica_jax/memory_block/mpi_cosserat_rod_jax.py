@@ -9,10 +9,11 @@ import numpy as np
 
 from elastica.typing import RodType, SystemIdxType
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
+from elastica_jax.memory_block.protocol import RodBlockProtocol
 
 
 def _resolve_block_device(device: str | jax.Device) -> jax.Device:
-    if isinstance(device, jax.Device):
+    if not isinstance(device, str):
         return device
     devices = tuple(jax.devices(device))
     assert devices, f"Requested backend {device!r} returned no devices."
@@ -24,7 +25,7 @@ class _MpiCosseratRodBlock:
     One MPI rank's rod memory block.
 
     Each rank builds only the rods it owns, then delegates rollout and host/device
-    synchronization to a single local ``_CosseratRodMemoryBlock``.
+    synchronization to a single local horizontal or vertical Cosserat rod block.
     """
 
     def __init__(
@@ -32,7 +33,7 @@ class _MpiCosseratRodBlock:
         *,
         comm: Any,
         device_dtype: np.dtype,
-        inner_block_cls: Type[_CosseratRodMemoryBlock] = _CosseratRodMemoryBlock,
+        inner_block_cls: Type[RodBlockProtocol] = _CosseratRodMemoryBlock,
         device: str | jax.Device = "cpu",
     ) -> None:
         self._comm = comm
@@ -41,7 +42,7 @@ class _MpiCosseratRodBlock:
         self.device_dtype = device_dtype
         self.inner_block_cls = inner_block_cls
         self._device = _resolve_block_device(device)
-        self._inner_block: _CosseratRodMemoryBlock | None = None
+        self._inner_block: RodBlockProtocol | None = None
         self.global_rod_indices: np.ndarray = np.zeros(0, dtype=np.int32)
 
     @property
@@ -89,7 +90,7 @@ class _MpiCosseratRodBlock:
         )
         return self
 
-    def _require_inner_block(self) -> _CosseratRodMemoryBlock:
+    def _require_inner_block(self) -> RodBlockProtocol:
         assert (
             self._inner_block is not None
         ), "MPI rod block must be built during finalize() before use."

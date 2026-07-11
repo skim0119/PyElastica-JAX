@@ -50,18 +50,48 @@ class SeriesSpec:
     # CPU MPI ranks represented by one device rank on the plot x-axis.
     # GG CPU ranks map 1:1; GH200 maps 1 GPU -> 144 (or 72 if halfed).
     cpu_ranks_per_device: int
+    # If False, skip this series when the CSV is not present yet.
+    required: bool = True
+
+
+def _resolve_series_path(path: Path) -> Path | None:
+    """
+    Resolve a concrete CSV path, allowing ``N*`` placeholders.
+
+    Examples
+    --------
+    ``scaling_plot_gpu_N*_vertical.csv`` matches
+    ``scaling_plot_gpu_N8_vertical.csv`` or ``scaling_plot_gpu_N16_vertical.csv``.
+    When several match, the lexicographically last name is used.
+    """
+    if path.is_file():
+        return path
+    if "*" not in path.name:
+        return None
+    matches = sorted(path.parent.glob(path.name))
+    if not matches:
+        return None
+    return matches[-1]
 
 
 # GPU rank work is expressed in GG CPU-rank equivalents:
-#   full  = 144 ranks/GPU x 64 rods/rank = 9216 rods/GPU
-#   halfed =  72 ranks/GPU x 64 rods/rank = 4608 rods/GPU
+#   full / vertical = 144 ranks/GPU x 64 rods/rank = 9216 rods/GPU
+#   halfed          =  72 ranks/GPU x 64 rods/rank = 4608 rods/GPU
 SERIES_SPECS = (
     SeriesSpec(
         path=SCRIPT_DIR / "scaling_plot_gpu_N8.csv",
         machine="GH200",
-        backend_label="JAX (GPU-CUDA), 144 ranks/GPU",
+        backend_label="JAX (GPU-CUDA), horizontal, 144 ranks/GPU",
         color="#15803D",
         cpu_ranks_per_device=144,
+    ),
+    SeriesSpec(
+        path=SCRIPT_DIR / "scaling_plot_gpu_N*_vertical.csv",
+        machine="GH200",
+        backend_label="JAX (GPU-CUDA), vertical, 144 ranks/GPU",
+        color="#0891B2",
+        cpu_ranks_per_device=144,
+        required=False,
     ),
     SeriesSpec(
         path=SCRIPT_DIR / "scaling_plot_gpu_N8_halfed.csv",
@@ -151,15 +181,21 @@ def combine_csvs(specs: tuple[SeriesSpec, ...] = SERIES_SPECS) -> list[Row]:
     """Merge configured machine CSVs into one long-form table."""
     combined: list[Row] = []
     for spec in specs:
-        assert spec.path.is_file(), f"Missing CSV: {spec.path}"
+        resolved = _resolve_series_path(spec.path)
+        if resolved is None:
+            message = f"Missing CSV for {spec.backend_label!r}: {spec.path}"
+            assert not spec.required, message
+            print(f"skipping optional series: {message}")
+            continue
         combined.extend(
             _aggregate_csv(
-                spec.path,
+                resolved,
                 spec.machine,
                 spec.backend_label,
                 cpu_ranks_per_device=spec.cpu_ranks_per_device,
             )
         )
+    assert combined, "No benchmark CSVs were loaded."
 
     backend_rank = {label: index for index, label in enumerate(BACKEND_ORDER)}
     machine_rank = {label: index for index, label in enumerate(MACHINE_ORDER)}
@@ -189,19 +225,23 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
         }
     )
 
-    series: dict[tuple[str, str], list[tuple[int, float, float]]] = defaultdict(list)
+    series: dict[tuple[str, str], list[tuple[int, float, float, int]]] = defaultdict(
+        list
+    )
     for (
         machine,
         backend_label,
         _mpi_size,
         effective_cpu_ranks,
-        _spr,
+        snakes_per_rank,
         _n,
         walltime,
         _steps,
         thr,
     ) in rows:
-        series[(machine, backend_label)].append((effective_cpu_ranks, walltime, thr))
+        series[(machine, backend_label)].append(
+            (effective_cpu_ranks, walltime, thr, snakes_per_rank)
+        )
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 6.2))
     walltime_ax, throughput_ax = axes
@@ -216,6 +256,10 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
             x_ranks = np.asarray([item[0] for item in points], dtype=np.float64)
             walltimes = np.asarray([item[1] for item in points], dtype=np.float64)
             throughputs = np.asarray([item[2] for item in points], dtype=np.float64)
+            snakes_per_rank = np.asarray(
+                [item[3] for item in points], dtype=np.float64
+            )
+            walltime_per_rod = walltimes / snakes_per_rank
             color = BACKEND_COLORS[backend]
             common = {
                 "color": color,
@@ -227,7 +271,7 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
                 "markeredgecolor": color,
                 "markerfacecolor": color if style["filled"] else "none",
             }
-            walltime_ax.loglog(x_ranks, walltimes, **common)
+            walltime_ax.loglog(x_ranks, walltime_per_rod, **common)
             throughput_ax.loglog(x_ranks, throughputs, **common)
 
     for ax in axes:
@@ -236,8 +280,8 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
         ax.grid(True, which="minor", color="#EEF0F3", linewidth=0.6)
         ax.set_axisbelow(True)
 
-    walltime_ax.set_ylabel("max per-rank rollout walltime (s)")
-    walltime_ax.set_title("Weak-scaling walltime")
+    walltime_ax.set_ylabel("max per-rank walltime (s / rod)")
+    walltime_ax.set_title("Weak-scaling walltime per rod")
     throughput_ax.set_ylabel("throughput (rod-steps / s)")
     throughput_ax.set_title("Weak-scaling throughput")
 

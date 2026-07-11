@@ -94,3 +94,49 @@ def test_mpi_block_finalize_and_integrate_local_gravity() -> None:
     rod_block.from_device()
     for rod, initial in zip(rods, initial_positions, strict=True):
         assert not np.allclose(rod.position_collection, initial)
+
+
+def test_mpi_vertical_block_is_stacked_and_integrates() -> None:
+    """MPI-wrapped vertical blocks must keep stacked layout through JAXOpsBlock."""
+    from elastica_jax.modules.jax_ops_block import JAXOpsBlock
+
+    comm = _FakeComm(rank=0, size=2)
+    rod_block = eaj.configure_rod_block_mpi(
+        comm=comm,
+        inner_block_cls=eaj._CosseratRodVerticalMemoryBlock,
+    )
+    assert JAXOpsBlock._is_stacked_layout(rod_block)
+
+    simulator = _RodBlockSimulator()
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
+
+    n_rods_total = 4
+    rods: list[ea.CosseratRod] = []
+    for rod_index in range(n_rods_total):
+        if rod_block.owns_rod(rod_index):
+            rod = _build_rod()
+            rods.append(rod)
+            simulator.append(rod)
+
+    dt = 1.0e-4
+    simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
+    simulator.operate_block(rod_block).using(
+        eaj.GravityAnalyticalDamperJax,
+        time_step=dt,
+        uniform_damping_constant=0.5,
+    )
+    simulator.finalize()
+
+    assert isinstance(rod_block, eaj._MpiCosseratRodBlock)
+    assert isinstance(rod_block._inner_block, eaj._CosseratRodVerticalMemoryBlock)
+    assert JAXOpsBlock._is_stacked_layout(rod_block)
+    assert rod_block.position_collection.ndim == 3
+
+    initial_positions = [rod.position_collection.copy() for rod in rods]
+    stepper = eaj.PositionVerletJAX()
+    stepper.integrate(simulator, time=0.0, final_time=0.01, dt=dt)
+    jax.block_until_ready(rod_block)
+
+    rod_block.from_device()
+    for rod, initial in zip(rods, initial_positions, strict=True):
+        assert not np.allclose(rod.position_collection, initial)

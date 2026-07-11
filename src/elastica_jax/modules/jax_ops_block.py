@@ -253,7 +253,20 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
     @staticmethod
     def _is_stacked_layout(block_system: object) -> bool:
-        return isinstance(block_system, _CosseratRodVerticalMemoryBlock)
+        """
+        Return whether ``block_system`` stores rods on a stacked last axis.
+
+        MPI and sharded wrappers delegate to an inner horizontal or vertical
+        block; detect that inner layout instead of only the wrapper type.
+        """
+        if isinstance(block_system, _CosseratRodVerticalMemoryBlock):
+            return True
+        if isinstance(block_system, (_MpiCosseratRodBlock, _ShardedCosseratRodBlock)):
+            return issubclass(
+                block_system.inner_block_cls,
+                _CosseratRodVerticalMemoryBlock,
+            )
+        return False
 
     @staticmethod
     def _gather_attr(
