@@ -80,6 +80,7 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 
 JAXRodBlock: TypeAlias = (
     eaj._CosseratRodMemoryBlock
+    | eaj._CosseratRodVerticalMemoryBlock
     | eaj._ShardedCosseratRodBlock
     | eaj._MpiCosseratRodBlock
 )
@@ -234,6 +235,7 @@ def build_jax_sim(
     device_dtype: np.dtype,
     n_snakes: int,
     sharded: bool = False,
+    inner_block_cls: type | None = None,
 ) -> tuple[JAXSimulator, JAXRodBlock]:
     rod_block: JAXRodBlock
     if sharded:
@@ -241,15 +243,19 @@ def build_jax_sim(
         rod_block = eaj.configure_rod_block_sharded(
             devices=devices,
             device_dtype=np.dtype(device_dtype),
+            inner_block_cls=inner_block_cls or eaj._CosseratRodMemoryBlock,
         )
     else:
         assert isinstance(device, jax.Device), (
             "A non-sharded JAX block requires exactly one device."
         )
-        rod_block = eaj.configure_rod_block(
-            device=device,
-            device_dtype=np.dtype(device_dtype),
-        )
+        configure_kwargs: dict[str, Any] = {
+            "device": device,
+            "device_dtype": np.dtype(device_dtype),
+        }
+        if inner_block_cls is not None:
+            configure_kwargs["inner_block_cls"] = inner_block_cls
+        rod_block = eaj.configure_rod_block(**configure_kwargs)
 
     sim = JAXSimulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
@@ -412,6 +418,12 @@ def run_jax_rollout(
     """Build a single-device JAX block simulator and time a Position Verlet rollout."""
     dtype = np.dtype(np.float64)
     device = eaj.resolve_backend_devices(backend)[0]
+    # CPU sweep uses the stacked-axis vertical block; CUDA keeps horizontal packing.
+    inner_block_cls = (
+        eaj._CosseratRodVerticalMemoryBlock
+        if backend == "cpu"
+        else eaj._CosseratRodMemoryBlock
+    )
 
     with jax.default_device(device):
         instantiate_start = time.perf_counter()
@@ -419,6 +431,7 @@ def run_jax_rollout(
             device=device,
             device_dtype=dtype,
             n_snakes=n_snakes,
+            inner_block_cls=inner_block_cls,
         )
         _block_until_ready((jax_block,))
         instantiate_seconds = time.perf_counter() - instantiate_start

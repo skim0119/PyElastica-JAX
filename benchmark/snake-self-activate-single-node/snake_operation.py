@@ -13,6 +13,10 @@ import jax.numpy as jnp
 from elastica_jax._linalg import _jax_batch_cross, _jax_batch_matvec
 
 
+def _is_stacked_block(system: object) -> bool:
+    return isinstance(system, eaj._CosseratRodVerticalMemoryBlock)
+
+
 class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
     """Muscle torques for batched snake rods on a JAX memory block."""
 
@@ -25,9 +29,17 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
         _system,
     ) -> None:
         widths = _system.end_idx_in_rod_elems - _system.start_idx_in_rod_elems
-        assert np.all(
-            widths == widths[0]
-        ), "SnakeMuscleTorquesBlockJax requires uniform element counts across rods."
+        assert np.all(widths == widths[0]), (
+            "SnakeMuscleTorquesBlockJax requires uniform element counts across rods."
+        )
+        if _is_stacked_block(_system):
+            rest_lengths = np.asarray(_system.rest_lengths[0])
+        else:
+            rest_lengths = np.asarray(
+                _system.rest_lengths[
+                    _system.start_idx_in_rod_elems[0] : _system.end_idx_in_rod_elems[0]
+                ]
+            )
         template = ea.MuscleTorques(
             base_length=base_length,
             b_coeff=b_coeff[:-1],
@@ -35,14 +47,11 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
             wave_number=2.0 * np.pi / float(b_coeff[-1]),
             phase_shift=0.0,
             direction=np.array([0.0, 1.0, 0.0]),
-            rest_lengths=np.asarray(
-                _system.rest_lengths[
-                    _system.start_idx_in_rod_elems[0] : _system.end_idx_in_rod_elems[0]
-                ]
-            ),
+            rest_lengths=rest_lengths,
             ramp_up_time=period,
             with_spline=True,
         )
+        self.stacked = _is_stacked_block(_system)
         self.elem_indices = jnp.asarray(
             _uniform_index_matrix(
                 _system.start_idx_in_rod_elems,
@@ -92,15 +101,22 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
         )
         torque_world = _batch_matvec_over_rods(directors, torque_local)
         external_torques = state["external_torques"]
-        external_torques = external_torques.at[:, self.elem_indices[:, 1:]].add(
-            jnp.moveaxis(torque_world[:, :, 1:], 0, 1)
-        )
-        previous_directors = directors[:, :, :, :-1]
-        next_local = torque_local[:, :, 1:]
-        previous_world = _batch_matvec_over_rods(previous_directors, next_local)
-        external_torques = external_torques.at[:, self.elem_indices[:, :-1]].add(
-            -jnp.moveaxis(previous_world, 0, 1)
-        )
+        if self.stacked:
+            external_torques = external_torques.at[:, :, 1:].add(torque_world[:, :, 1:])
+            previous_directors = directors[:, :, :, :-1]
+            next_local = torque_local[:, :, 1:]
+            previous_world = _batch_matvec_over_rods(previous_directors, next_local)
+            external_torques = external_torques.at[:, :, :-1].add(-previous_world)
+        else:
+            external_torques = external_torques.at[:, self.elem_indices[:, 1:]].add(
+                jnp.moveaxis(torque_world[:, :, 1:], 0, 1)
+            )
+            previous_directors = directors[:, :, :, :-1]
+            next_local = torque_local[:, :, 1:]
+            previous_world = _batch_matvec_over_rods(previous_directors, next_local)
+            external_torques = external_torques.at[:, self.elem_indices[:, :-1]].add(
+                -jnp.moveaxis(previous_world, 0, 1)
+            )
         updated = dict(state)
         updated["external_torques"] = external_torques
         return updated
@@ -122,6 +138,7 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         _system,
     ) -> None:
         del static_mu_array
+        self.stacked = _is_stacked_block(_system)
         self.node_indices = jnp.asarray(
             _uniform_index_matrix(
                 _system.start_idx_in_rod_nodes,
@@ -362,20 +379,29 @@ def _uniform_index_matrix(
 
 
 def _gather_vector_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
+    if array.ndim == 3 and array.shape[1] == 3:
+        return jnp.take_along_axis(array, indices[:, None, :], axis=-1)
     return jnp.moveaxis(jnp.take(array, indices, axis=-1), 1, 0)
 
 
 def _gather_tensor_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
+    if array.ndim == 4 and array.shape[1] == 3 and array.shape[2] == 3:
+        return jnp.take_along_axis(array, indices[:, None, None, :], axis=-1)
     return jnp.moveaxis(jnp.take(array, indices, axis=-1), 2, 0)
 
 
 def _gather_scalar_batch(array: jax.Array, indices: jax.Array) -> jax.Array:
+    if array.ndim == 2:
+        return jnp.take_along_axis(array, indices, axis=-1)
     return jnp.take(array, indices, axis=-1)
 
 
 def _scatter_set_vector_batch(
     array: jax.Array, indices: jax.Array, values: jax.Array
 ) -> jax.Array:
+    if array.ndim == 3 and array.shape[1] == 3:
+        del indices
+        return values
     return array.at[:, indices].set(jnp.moveaxis(values, 0, 1))
 
 

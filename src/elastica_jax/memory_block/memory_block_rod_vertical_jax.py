@@ -320,6 +320,16 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self.n_voronoi = self.n_elems - 1
         self.n_elems_in_rods = np.full(self.n_rods, self.n_elems, dtype=np.int32)
 
+        # Per-rod spans within each stacked rod (always the full domain).
+        self.start_idx_in_rod_nodes = np.zeros(self.n_rods, dtype=np.int32)
+        self.end_idx_in_rod_nodes = np.full(self.n_rods, self.n_nodes, dtype=np.int32)
+        self.start_idx_in_rod_elems = np.zeros(self.n_rods, dtype=np.int32)
+        self.end_idx_in_rod_elems = np.full(self.n_rods, self.n_elems, dtype=np.int32)
+        self.start_idx_in_rod_voronoi = np.zeros(self.n_rods, dtype=np.int32)
+        self.end_idx_in_rod_voronoi = np.full(
+            self.n_rods, self.n_voronoi, dtype=np.int32
+        )
+
         self._allocate_stacked_attributes(systems)
         self._recompute_sigma_kappa()
 
