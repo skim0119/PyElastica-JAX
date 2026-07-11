@@ -12,9 +12,13 @@ The goal is to scale. If your problem is below an order of 100~ elements, this f
 
 ## Benchmark
 
-### Single-node, self-actuated
+### Single-node
 
 ![Snake throughput scaling](https://raw.githubusercontent.com/skim0119/PyElastica-JAX/assets/snake_throughput_scaling_combined.png)
+
+### Multi-node, weak scaling
+
+![Snake MPI throughput scaling](https://raw.githubusercontent.com/skim0119/PyElastica-JAX/assets/snake_mpi_throughput_scaling_combined.png)
 
 ## Before you start
 
