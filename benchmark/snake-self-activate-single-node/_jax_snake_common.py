@@ -379,6 +379,53 @@ def run_pyelastica_rollout(
     return instantiate_seconds, rollout_seconds
 
 
+def run_pyelastica_rollout_mpi(
+    *,
+    comm: Any,
+    snakes_per_rank: int,
+    steps: int,
+    warmup_runs: int,
+) -> tuple[float, list[float] | None]:
+    """
+    Time one MPI-local PyElastica rollout and gather per-rank walltimes.
+
+    Each rank independently builds and integrates ``snakes_per_rank`` snakes
+    with the same operators as ``run_pyelastica_rollout`` (muscle torques,
+    gravity, anisotropic plane friction, analytical damping, PositionVerlet).
+    There is no inter-rank physics coupling; this matches the weak-scaling
+    work per JAX MPI rank.
+
+    Parameters
+    ----------
+    comm
+        MPI communicator used to gather rollout timing samples.
+    snakes_per_rank
+        Number of snakes owned and integrated by this rank.
+    steps
+        Number of timed integration steps.
+    warmup_runs
+        Number of warmup steps before timing.
+
+    Returns
+    -------
+    tuple[float, list[float] | None]
+        Maximum instantiation time across ranks and gathered per-rank rollout
+        times on rank 0. Non-root ranks receive ``None`` for the gathered
+        rollout times.
+    """
+    from mpi4py import MPI
+
+    assert snakes_per_rank > 0, "snakes_per_rank must be positive."
+    instantiate_seconds, rollout_seconds = run_pyelastica_rollout(
+        n_snakes=snakes_per_rank,
+        steps=steps,
+        warmup_runs=warmup_runs,
+    )
+    rollout_seconds_all_ranks = comm.gather(rollout_seconds, root=0)
+    instantiate_seconds = comm.allreduce(instantiate_seconds, op=MPI.MAX)
+    return instantiate_seconds, rollout_seconds_all_ranks
+
+
 def integrate_jax_block_rollout(
     jax_sim: JAXSimulator,
     jax_blocks: Sequence[JAXRodBlock],

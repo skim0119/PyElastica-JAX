@@ -17,10 +17,17 @@ from tqdm import tqdm
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-WORKER = SCRIPT_DIR / "jax_snake_mpi_throughput.py"
+JAX_WORKER = SCRIPT_DIR / "jax_snake_mpi_throughput.py"
+PYELASTICA_WORKER = SCRIPT_DIR / "pyelastica_snake_mpi_throughput.py"
 
 RolloutPoint = tuple[int, int, int, np.ndarray]
 RolloutSample = tuple[int, int, int, int, float]
+
+
+def _worker_script(backend: str) -> Path:
+    if backend == "pyelastica":
+        return PYELASTICA_WORKER
+    return JAX_WORKER
 
 
 def _parse_rollout_walltimes(output: str) -> np.ndarray:
@@ -62,6 +69,7 @@ def _mpi_worker_env(*, mpi_size: int) -> dict[str, str]:
             "OPENBLAS_NUM_THREADS": "1",
             "MKL_NUM_THREADS": "1",
             "NUMEXPR_NUM_THREADS": "1",
+            "NUMBA_NUM_THREADS": "1",
         }
     )
     return env
@@ -83,27 +91,26 @@ def _build_mpiexec_command(
     bind_to_core: bool,
     vertical: bool,
 ) -> list[str]:
-    command = ["ibrun"]
-    command.extend(
-        [
-            "-n",
-            str(mpi_size),
-            python_executable,
-            str(WORKER),
-            "--backend",
-            backend,
-            "--snakes-per-rank-exp",
-            str(snakes_per_rank_exp),
-            "--snakes-per-rank-multiplier",
-            str(snakes_per_rank_multiplier),
-            "--steps",
-            str(steps),
-            "--warmup-runs",
-            str(warmup_runs),
-        ]
-    )
-    if vertical:
-        command.append("--vertical")
+    worker = _worker_script(backend)
+    command = [
+        "ibrun",
+        "-n",
+        str(mpi_size),
+        python_executable,
+        str(worker),
+        "--snakes-per-rank-exp",
+        str(snakes_per_rank_exp),
+        "--snakes-per-rank-multiplier",
+        str(snakes_per_rank_multiplier),
+        "--steps",
+        str(steps),
+        "--warmup-runs",
+        str(warmup_runs),
+    ]
+    if backend != "pyelastica":
+        command.extend(["--backend", backend])
+        if vertical:
+            command.append("--vertical")
     return command
 
 
@@ -268,7 +275,10 @@ def _export_scaling_plot(
         dtype=np.float64,
     )
     baseline = float(max_walltimes[0]) if max_walltimes.size else 0.0
-    packing = "vertical" if vertical else "horizontal"
+    if backend == "pyelastica":
+        layout_label = "numba"
+    else:
+        layout_label = "vertical" if vertical else "horizontal"
 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.scatter(mpi_sizes, max_walltimes, marker="o", label="max per-rank rollout")
@@ -283,7 +293,7 @@ def _export_scaling_plot(
     ax.set_xlabel("MPI world size")
     ax.set_ylabel("rollout walltime (s)")
     ax.set_title(
-        f"MPI weak scaling ({backend}, {packing}, "
+        f"MPI weak scaling ({backend}, {layout_label}, "
         f"snakes_per_rank={snakes_per_rank}, {steps} steps, 20 elements/snake)"
     )
     ax.grid(True, alpha=0.3)
@@ -456,15 +466,15 @@ def _load_scaling_csv(
 )
 @click.option(
     "--backend",
-    type=click.Choice(["cpu", "cuda"], case_sensitive=False),
+    type=click.Choice(["cpu", "cuda", "pyelastica"], case_sensitive=False),
     default="cpu",
     show_default=True,
-    help="JAX backend for the MPI-local rod block.",
+    help="Rollout backend: JAX cpu/cuda or PyElastica (numba).",
 )
 @click.option(
     "--vertical",
     is_flag=True,
-    help="Use vertical (stacked-axis) rod memory block packing.",
+    help="Use vertical (stacked-axis) rod memory block packing (JAX only).",
 )
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
@@ -484,6 +494,8 @@ def main(
 ) -> None:
     assert steps > 0, "steps must be positive."
     assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
+    if backend == "pyelastica":
+        assert not vertical, "--vertical is only supported for JAX backends."
 
     if from_csv is not None:
         (
