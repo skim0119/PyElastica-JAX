@@ -6,4 +6,6 @@ from .block_factory import (
     resolve_backend_devices,
 )
 from .memory_block_rod_jax import _CosseratRodMemoryBlock
+from .memory_block_rod_vertical_jax import _CosseratRodVerticalMemoryBlock
 from .mpi_cosserat_rod_jax import _MpiCosseratRodBlock
+from .protocol import RodBlockProtocol
