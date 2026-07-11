@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable, Iterator
+from typing import Iterator, Protocol, runtime_checkable
+
+import jax
+import numpy as np
 
 from elastica.typing import RodType, SystemIdxType
 
@@ -26,6 +29,15 @@ class RodBlockProtocol(Protocol):
     calling the instance as ``block(systems, system_idx_list)`` during
     ``finalize()``. The same object then appears in ``final_systems()``.
     """
+
+    def __init__(
+        self,
+        *,
+        device: jax.Device,
+        device_dtype: np.dtype,
+    ) -> None:
+        """Configure device placement before systems are packed."""
+        ...
 
     def __call__(
         self,

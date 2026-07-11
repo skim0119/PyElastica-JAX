@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 
-def _jax_batch_matvec(matrix_collection, vector_collection):
+def _jax_batch_matvec(
+    matrix_collection: jax.Array, vector_collection: jax.Array
+) -> jax.Array:
     out = jnp.empty_like(vector_collection)
     out = out.at[0, :].set(
         matrix_collection[0, 0, :] * vector_collection[0, :]
@@ -25,7 +28,9 @@ def _jax_batch_matvec(matrix_collection, vector_collection):
     return out
 
 
-def _jax_batch_matmul(first_matrix_collection, second_matrix_collection):
+def _jax_batch_matmul(
+    first_matrix_collection: jax.Array, second_matrix_collection: jax.Array
+) -> jax.Array:
     out = jnp.empty_like(second_matrix_collection)
     out = out.at[0, 0, :].set(
         first_matrix_collection[0, 0, :] * second_matrix_collection[0, 0, :]
@@ -75,7 +80,9 @@ def _jax_batch_matmul(first_matrix_collection, second_matrix_collection):
     return out
 
 
-def _jax_batch_cross(first_vector_collection, second_vector_collection):
+def _jax_batch_cross(
+    first_vector_collection: jax.Array, second_vector_collection: jax.Array
+) -> jax.Array:
     out = jnp.empty_like(first_vector_collection)
     out = out.at[0, :].set(
         first_vector_collection[1, :] * second_vector_collection[2, :]
@@ -92,5 +99,7 @@ def _jax_batch_cross(first_vector_collection, second_vector_collection):
     return out
 
 
-def _jax_batch_dot(first_vector_collection, second_vector_collection):
+def _jax_batch_dot(
+    first_vector_collection: jax.Array, second_vector_collection: jax.Array
+) -> jax.Array:
     return jnp.sum(first_vector_collection * second_vector_collection, axis=0)

@@ -8,6 +8,7 @@ from typing import Any, Iterable, Sequence, Type
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from elastica.typing import RodType, SystemIdxType
 from elastica_jax.memory_block.memory_block_rod_jax import (
@@ -18,6 +19,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     _SYNCABLE_ATTRS,
     _VORONOI_ATTRS,
 )
+
 
 SHARDED_STATE_KEY = "_eaj_sharded_state"
 CONTACT_STATE_KEY_PREFIX = "capsule_contact_"
@@ -74,7 +76,7 @@ class _ShardedCosseratRodBlock:
         inner_block_cls: Type[_CosseratRodMemoryBlock] = _CosseratRodMemoryBlock,
     ) -> None:
         self._devices = tuple(devices)
-        self._rod_to_shard = np.zeros(0, dtype=np.int32)
+        self._rod_to_shard: npt.NDArray[np.int32] = np.zeros(0, dtype=np.int32)
         self.device_dtype = device_dtype
         self.block_checkpoint_path = (
             Path(block_checkpoint) if block_checkpoint is not None else None
@@ -289,7 +291,8 @@ class _ShardedCosseratRodBlock:
             return self._systems
         if isinstance(rods, (list, tuple)):
             return tuple(rods)
-        return (rods,)
+        single_rod: RodType = rods  # type: ignore[assignment]
+        return (single_rod,)
 
     def _shard_blocks_for_rods(
         self, rods: RodSyncTarget

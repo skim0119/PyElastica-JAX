@@ -111,13 +111,13 @@ def layout_rods_for_block(
     youngs_modulus: float,
     shear_modulus: float,
     spacing: float | None = None,
-):
+) -> list[Any]:
     """Create cheap placeholder rods that only define block layout."""
     import elastica as ea
 
     if spacing is None:
         spacing = 2.0 * length
-    rods = []
+    rods: list[Any] = []
     for rod_index in range(n_rods):
         start = np.array([0.0, 0.0, spacing * rod_index], dtype=np.float64)
         rod = ea.CosseratRod.straight_rod(
@@ -264,7 +264,7 @@ def validate_block_checkpoint_shard(
 
 
 def apply_block_checkpoint_to_memory_block(
-    block: _CosseratRodMemoryBlock,
+    block: Any,
     path: Path | str,
     *,
     shard_index: int,
