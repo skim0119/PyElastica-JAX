@@ -49,6 +49,7 @@ def run(
     steps: int,
     warmup_runs: int,
     backend: str,
+    vertical: bool = False,
     comm: MPI.Intracomm | None = None,
 ) -> list[float] | None:
     """
@@ -69,6 +70,8 @@ def run(
         Number of warmup integration chunks before timing.
     backend
         JAX backend for the MPI-local rod block, such as ``"cpu"`` or ``"cuda"``.
+    vertical
+        If True, pack rods with the vertical memory block.
     comm
         MPI communicator. Defaults to ``MPI.COMM_WORLD``.
 
@@ -91,6 +94,7 @@ def run(
         steps=steps,
         warmup_runs=warmup_runs,
         backend=backend,
+        vertical=vertical,
     )
     return rollout_walltimes
 
@@ -119,12 +123,18 @@ def run(
 )
 @click.option("--steps", type=int, default=1000, show_default=True)
 @click.option("--warmup-runs", type=int, default=1, show_default=True)
+@click.option(
+    "--vertical",
+    is_flag=True,
+    help="Use vertical (stacked-axis) rod memory block packing.",
+)
 def main(
     backend: str,
     snakes_per_rank_exp: int,
     snakes_per_rank_multiplier: int,
     steps: int,
     warmup_runs: int,
+    vertical: bool,
 ) -> None:
     comm = MPI.COMM_WORLD
     snakes_per_rank = mpi_snakes_per_rank(
@@ -142,6 +152,7 @@ def main(
         steps=steps,
         warmup_runs=warmup_runs,
         backend=backend,
+        vertical=vertical,
         comm=comm,
     )
     if comm.Get_rank() == 0:
@@ -150,6 +161,7 @@ def main(
             f"{rollout_walltime:.18e}" for rollout_walltime in rollout_walltimes
         )
         print(f"backend={backend}")
+        print(f"vertical={int(vertical)}")
         print(f"mpi_size={comm.Get_size()}")
         print(f"snakes_per_rank_multiplier={snakes_per_rank_multiplier}")
         print(f"snakes_per_rank={snakes_per_rank}")

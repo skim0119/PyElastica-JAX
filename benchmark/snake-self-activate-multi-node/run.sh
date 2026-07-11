@@ -1,8 +1,8 @@
 #!/bin/sh
 #SBATCH --job-name=multi_node
-#SBATCH --nodes=28
+#SBATCH --nodes=32
 #SBATCH --ntasks-per-node=144
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --partition=gg
 #SBATCH --output=logs/slurm_multi_node_%j.out
 #SBATCH --error=logs/slurm_multi_node_%j.err
@@ -41,3 +41,12 @@ cd "${REPO_ROOT}/benchmark/snake-self-activate-multi-node"
     --warmup-runs 5 \
     --python "${PYTHON_BIN}" \
     --output "scaling_plot_N${MAX_NODES}.png"
+
+"${PYTHON_BIN}" "sweep_jax_snake_mpi_throughput.py" \
+    --mpi-sizes "${MPI_SIZES[*]}" \
+    --snakes-per-rank-exp 6 \
+    --steps 1000 \
+    --vertical \
+    --warmup-runs 5 \
+    --python "${PYTHON_BIN}" \
+    --output "scaling_plot_N${MAX_NODES}_vertical.png"

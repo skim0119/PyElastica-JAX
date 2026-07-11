@@ -1,9 +1,9 @@
 #!/bin/sh
 #SBATCH --job-name=multi_node_gpu
-#SBATCH --nodes=2
+#SBATCH --nodes=16
 #SBATCH --ntasks-per-node=1
-#SBATCH --time=02:00:00
-#SBATCH --partition=gh-dev
+#SBATCH --time=12:00:00
+#SBATCH --partition=gh
 #SBATCH --output=logs/slurm_multi_node_gpu_%j.out
 #SBATCH --error=logs/slurm_multi_node_gpu_%j.err
 
@@ -48,3 +48,14 @@ cd "${REPO_ROOT}/benchmark/snake-self-activate-multi-node"
     --warmup-runs 5 \
     --python "${PYTHON_BIN}" \
     --output "scaling_plot_gpu_N${MAX_NODES}.png"
+
+"${PYTHON_BIN}" "sweep_jax_snake_mpi_throughput.py" \
+    --backend cuda \
+    --mpi-sizes "${MPI_SIZES[*]}" \
+    --snakes-per-rank-exp 6 \
+    --snakes-per-rank-multiplier "${CPU_RANKS_PER_NODE}" \
+    --steps 1000 \
+    --vertical \
+    --warmup-runs 5 \
+    --python "${PYTHON_BIN}" \
+    --output "scaling_plot_gpu_N${MAX_NODES}_vertical.png"

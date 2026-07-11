@@ -570,13 +570,20 @@ def build_jax_sim_mpi(
     device_dtype: np.dtype,
     n_snakes_total: int,
     backend: str = "cpu",
+    vertical: bool = False,
 ) -> tuple[JAXSimulator, eaj._MpiCosseratRodBlock]:
     """Build a JAX simulator with rods distributed across MPI ranks."""
     device = resolve_mpi_block_device(backend=backend, comm=comm)
+    inner_block_cls = (
+        eaj._CosseratRodVerticalMemoryBlock
+        if vertical
+        else eaj._CosseratRodMemoryBlock
+    )
     rod_block = eaj.configure_rod_block_mpi(
         comm=comm,
         device_dtype=np.dtype(device_dtype),
         device=device,
+        inner_block_cls=inner_block_cls,
     )
     simulator = JAXSimulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
@@ -595,6 +602,7 @@ def run_jax_rollout_mpi(
     steps: int,
     warmup_runs: int,
     backend: str = "cpu",
+    vertical: bool = False,
 ) -> tuple[float, list[float] | None]:
     """
     Build an MPI-local JAX block simulator and time a Position Verlet rollout.
@@ -611,6 +619,8 @@ def run_jax_rollout_mpi(
         Number of warmup integration chunks before timing.
     backend
         JAX backend for the MPI-local rod block, such as ``"cpu"`` or ``"cuda"``.
+    vertical
+        If True, pack rods with ``_CosseratRodVerticalMemoryBlock``.
 
     Returns
     -------
@@ -630,6 +640,7 @@ def run_jax_rollout_mpi(
             device_dtype=dtype,
             n_snakes_total=n_snakes_total,
             backend=backend,
+            vertical=vertical,
         )
         _block_until_ready((jax_block,))
         instantiate_seconds = time.perf_counter() - instantiate_start

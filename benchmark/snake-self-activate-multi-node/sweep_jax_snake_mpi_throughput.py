@@ -81,6 +81,7 @@ def _build_mpiexec_command(
     warmup_runs: int,
     backend: str,
     bind_to_core: bool,
+    vertical: bool,
 ) -> list[str]:
     command = ["ibrun"]
     command.extend(
@@ -101,6 +102,8 @@ def _build_mpiexec_command(
             str(warmup_runs),
         ]
     )
+    if vertical:
+        command.append("--vertical")
     return command
 
 
@@ -153,6 +156,7 @@ def _run_mpi_point(
     backend: str,
     python_executable: str,
     bind_to_core: bool,
+    vertical: bool,
 ) -> RolloutPoint:
     command = _build_mpiexec_command(
         mpi_size=mpi_size,
@@ -163,6 +167,7 @@ def _run_mpi_point(
         warmup_runs=warmup_runs,
         backend=backend,
         bind_to_core=bind_to_core,
+        vertical=vertical,
     )
     try:
         completed = subprocess.run(
@@ -204,6 +209,7 @@ def _sweep_mpi_sizes(
     backend: str,
     python_executable: str,
     bind_to_core: bool,
+    vertical: bool,
     verbose: bool,
 ) -> list[RolloutPoint]:
     snakes_per_rank = _snakes_per_rank(
@@ -222,6 +228,7 @@ def _sweep_mpi_sizes(
             backend=backend,
             python_executable=python_executable,
             bind_to_core=bind_to_core,
+            vertical=vertical,
         )
         _, _, n_snakes_total, rollout_walltimes = point
         print(
@@ -248,6 +255,7 @@ def _export_scaling_plot(
     snakes_per_rank_exp: int,
     snakes_per_rank_multiplier: int,
     steps: int,
+    vertical: bool,
     output: Path,
 ) -> None:
     snakes_per_rank = _snakes_per_rank(
@@ -260,6 +268,7 @@ def _export_scaling_plot(
         dtype=np.float64,
     )
     baseline = float(max_walltimes[0]) if max_walltimes.size else 0.0
+    packing = "vertical" if vertical else "horizontal"
 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.scatter(mpi_sizes, max_walltimes, marker="o", label="max per-rank rollout")
@@ -274,8 +283,8 @@ def _export_scaling_plot(
     ax.set_xlabel("MPI world size")
     ax.set_ylabel("rollout walltime (s)")
     ax.set_title(
-        f"MPI weak scaling ({backend}, snakes_per_rank={snakes_per_rank}, "
-        f"{steps} steps, 20 elements/snake)"
+        f"MPI weak scaling ({backend}, {packing}, "
+        f"snakes_per_rank={snakes_per_rank}, {steps} steps, 20 elements/snake)"
     )
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -292,6 +301,7 @@ def _export_scaling_csv(
     snakes_per_rank_exp: int,
     snakes_per_rank_multiplier: int,
     steps: int,
+    vertical: bool,
     output: Path,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -307,6 +317,7 @@ def _export_scaling_csv(
                 "snakes_per_rank_exp",
                 "snakes_per_rank_multiplier",
                 "steps",
+                "vertical",
             )
         )
         for (
@@ -326,6 +337,7 @@ def _export_scaling_csv(
                     snakes_per_rank_exp,
                     snakes_per_rank_multiplier,
                     steps,
+                    int(vertical),
                 )
             )
     print(f"wrote csv: {output}")
@@ -333,7 +345,7 @@ def _export_scaling_csv(
 
 def _load_scaling_csv(
     csv_path: Path,
-) -> tuple[list[RolloutPoint], int, int, int]:
+) -> tuple[list[RolloutPoint], int, int, int, bool]:
     with csv_path.open(newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows, f"CSV {csv_path} is empty."
@@ -347,6 +359,7 @@ def _load_scaling_csv(
 
     snakes_per_rank_multiplier = int(rows[0].get("snakes_per_rank_multiplier", 1))
     steps = int(rows[0]["steps"])
+    vertical = bool(int(rows[0].get("vertical", 0)))
     grouped_rows: list[tuple[int, list[dict[str, str]]]] = []
     for mpi_size, mpi_size_rows_iter in itertools.groupby(
         sorted(rows, key=lambda row: (int(row["mpi_size"]), int(row.get("rank", 0)))),
@@ -382,7 +395,7 @@ def _load_scaling_csv(
             )
         )
 
-    return points, snakes_per_rank_exp, snakes_per_rank_multiplier, steps
+    return points, snakes_per_rank_exp, snakes_per_rank_multiplier, steps, vertical
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -448,6 +461,11 @@ def _load_scaling_csv(
     show_default=True,
     help="JAX backend for the MPI-local rod block.",
 )
+@click.option(
+    "--vertical",
+    is_flag=True,
+    help="Use vertical (stacked-axis) rod memory block packing.",
+)
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
     snakes_per_rank_exp: int,
@@ -461,21 +479,27 @@ def main(
     python_executable: str,
     backend: str,
     bind_to_core: bool,
+    vertical: bool,
     quiet: bool,
 ) -> None:
     assert steps > 0, "steps must be positive."
     assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
 
     if from_csv is not None:
-        points, snakes_per_rank_exp, snakes_per_rank_multiplier, steps = (
-            _load_scaling_csv(from_csv)
-        )
+        (
+            points,
+            snakes_per_rank_exp,
+            snakes_per_rank_multiplier,
+            steps,
+            vertical,
+        ) = _load_scaling_csv(from_csv)
         _export_scaling_plot(
             points,
             backend=backend,
             snakes_per_rank_exp=snakes_per_rank_exp,
             snakes_per_rank_multiplier=snakes_per_rank_multiplier,
             steps=steps,
+            vertical=vertical,
             output=output,
         )
         return
@@ -494,6 +518,7 @@ def main(
         backend=backend,
         python_executable=python_executable,
         bind_to_core=bind_to_core,
+        vertical=vertical,
         verbose=not quiet,
     )
     _summarize_weak_scaling(points)
@@ -503,6 +528,7 @@ def main(
         snakes_per_rank_exp=snakes_per_rank_exp,
         snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
+        vertical=vertical,
         output=csv_path,
     )
     _export_scaling_plot(
@@ -511,6 +537,7 @@ def main(
         snakes_per_rank_exp=snakes_per_rank_exp,
         snakes_per_rank_multiplier=snakes_per_rank_multiplier,
         steps=steps,
+        vertical=vertical,
         output=output,
     )
 
