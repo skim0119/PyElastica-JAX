@@ -1,4 +1,8 @@
-"""Host-side spatial-hash broad phase for capsule contact (reference implementation)."""
+"""Host-side spatial-hash broad phase (reference / test implementation).
+
+Runtime capsule contact uses the device path in ``spatial_hash_jax``.
+This module remains for unit tests and host-side pair-count estimates.
+"""
 
 from __future__ import annotations
 

@@ -5,18 +5,17 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-jax.config.update("jax_enable_x64", True)
-
 from elastica_jax.contact.spatial_hash import _NEIGHBOR_OFFSETS
 
-_HASH_PRIMES = jnp.array([73856093, 19349663, 83492791], dtype=jnp.int64)
+_HASH_PRIMES = (73856093, 19349663, 83492791)
 _MAX_CELL_WINDOWS = 8
 
 
 def hash_cell_coords(cells: jax.Array) -> jax.Array:
     """Map ``(N, 3)`` integer cell coordinates to sortable scalar keys."""
     coords = cells.astype(jnp.int64)
-    return jnp.sum(coords * _HASH_PRIMES[None, :], axis=1)
+    primes = jnp.asarray(_HASH_PRIMES, dtype=coords.dtype)
+    return jnp.sum(coords * primes[None, :], axis=1)
 
 
 def capsule_aabb_overlap(

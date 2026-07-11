@@ -1,16 +1,15 @@
-"""Capsule contact operators for JAX rollouts."""
+"""Contact operators and broad-phase helpers for JAX rollouts."""
 
-from elastica_jax.contact.capsule_contact import (
+from elastica_jax.contact.capsule_contact import CapsuleContactOp, WallContactOp
+from elastica_jax.contact.capsule_metadata import (
     BlockCapsuleMetadata,
-    CapsuleContactOp,
-    WallContactOp,
     build_block_capsule_metadata,
     capsule_kinematics_from_block_state,
     initialize_capsule_contact_state,
     install_capsule_contact_state,
 )
-from elastica_jax.contact.rod_rod_contact import RodRodContactJax
 from elastica_jax.contact.kernels import CONTACT_THRESHOLD, slip_ramp
+from elastica_jax.contact.rod_rod_contact import RodRodContactJax
 from elastica_jax.contact.spatial_hash import (
     SpatialHashPairBuffer,
     default_cell_size,
