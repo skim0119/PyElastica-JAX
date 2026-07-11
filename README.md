@@ -18,7 +18,7 @@ The goal is to scale. If your problem is below an order of 100~ elements, this f
 
 ### Multi-node, weak scaling
 
-![Snake MPI throughput scaling](https://raw.githubusercontent.com/skim0119/PyElastica-JAX/assets/snake_mpi_throughput_scaling_combined.png)
+<img src="https://raw.githubusercontent.com/skim0119/PyElastica-JAX/assets/snake_mpi_throughput_scaling_combined.png" width="60%" alt="description">
 
 ## Before you start
 
