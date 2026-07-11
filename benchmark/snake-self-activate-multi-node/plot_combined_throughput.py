@@ -1,13 +1,13 @@
-"""Combine GG CPU and GH200 GPU MPI weak-scaling CSVs into one figure."""
+"""Combine all multi-node weak-scaling CSVs into one figure."""
 
 from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from matplotlib.patches import bbox_artist
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
@@ -18,129 +18,123 @@ MACHINE_STYLES = {
     "GH200": {
         "linestyle": "-",
         "marker": "o",
-        "markersize": 7.5,
-        "linewidth": 2.2,
+        "markersize": 5.5,
+        "linewidth": 1.8,
         "filled": True,
     },
     "GG": {
         "linestyle": "--",
-        "marker": "s",
-        "markersize": 6.5,
-        "linewidth": 2.0,
+        "marker": "o",
+        "markersize": 5.0,
+        "linewidth": 1.6,
+        "filled": False,
+    },
+    "GG_half": {
+        "linestyle": "--",
+        "marker": "^",
+        "markersize": 5.0,
+        "linewidth": 1.6,
         "filled": False,
     },
 }
 
 MACHINE_FULL_NAMES = {
     "GH200": "GH200 (GPU)",
-    "GG": "GG (CPU) - 2x72=144 cores",
+    "GG": "GG (CPU, 144 ranks/node)",
+    "GG_half": "GG (CPU, 72 ranks/node)",
 }
 
-MACHINE_ORDER = ("GH200", "GG")
+MACHINE_ORDER = ("GH200", "GG", "GG_half")
+
+# machine, series_label, mpi_size, n_nodes, snakes_per_rank, n_snakes,
+# walltime, steps, thr
+Row = tuple[str, str, int, float, int, int, float, int, float]
+
+GG_RANKS_PER_NODE = 144
+GG_RANKS_PER_NODE_HALF = 72
 
 
-@dataclass(frozen=True, slots=True)
-class SeriesSpec:
-    """One weak-scaling CSV mapped to display metadata."""
-
-    path: Path
-    machine: str
-    backend_label: str
-    color: str
-    # CPU MPI ranks represented by one device rank on the plot x-axis.
-    # GG CPU ranks map 1:1; GH200 maps 1 GPU -> 144 (or 72 if halfed).
-    cpu_ranks_per_device: int
-    # If False, skip this series when the CSV is not present yet.
-    required: bool = True
+def _is_source_csv(path: Path) -> bool:
+    if path.suffix != ".csv" or "combined" in path.name:
+        return False
+    # Drop superseded small GPU sweeps; N16 is the primary GH200 set.
+    if "gpu_N8" in path.name:
+        return False
+    # GPU half is a reduced rods/GPU load, not CPU affinity; omit from plot.
+    name = path.name.lower()
+    if "gpu" in name and "half" in name:
+        return False
+    return True
 
 
-def _resolve_series_path(path: Path) -> Path | None:
+def _is_halfed_series(path: Path) -> bool:
+    """Return True when the CSV name marks a halfed packing."""
+    return "half" in path.name.lower()
+
+
+def _machine_from_path(path: Path) -> str:
     """
-    Resolve a concrete CSV path, allowing ``N*`` placeholders.
+    Return the machine style key for a CSV path.
 
-    Examples
-    --------
-    ``scaling_plot_gpu_N*_vertical.csv`` matches
-    ``scaling_plot_gpu_N8_vertical.csv`` or ``scaling_plot_gpu_N16_vertical.csv``.
-    When several match, the lexicographically last name is used.
+    GG half (name contains ``half`` / ``halfed``) uses a distinct marker.
+    GPU half CSVs are filtered out in ``_is_source_csv``.
     """
-    if path.is_file():
-        return path
-    if "*" not in path.name:
-        return None
-    matches = sorted(path.parent.glob(path.name))
-    if not matches:
-        return None
-    return matches[-1]
+    if "gpu" in path.name.lower():
+        return "GH200"
+    return "GG_half" if _is_halfed_series(path) else "GG"
 
 
-# GPU rank work is expressed in GG CPU-rank equivalents:
-#   full / vertical = 144 ranks/GPU x 64 rods/rank = 9216 rods/GPU
-#   halfed          =  72 ranks/GPU x 64 rods/rank = 4608 rods/GPU
-SERIES_SPECS = (
-    SeriesSpec(
-        path=SCRIPT_DIR / "scaling_plot_gpu_N8.csv",
-        machine="GH200",
-        backend_label="JAX (GPU-CUDA), horizontal, 144 ranks/GPU",
-        color="#15803D",
-        cpu_ranks_per_device=144,
-    ),
-    SeriesSpec(
-        path=SCRIPT_DIR / "scaling_plot_gpu_N*_vertical.csv",
-        machine="GH200",
-        backend_label="JAX (GPU-CUDA), vertical, 144 ranks/GPU",
-        color="#0891B2",
-        cpu_ranks_per_device=144,
-        required=False,
-    ),
-    SeriesSpec(
-        path=SCRIPT_DIR / "scaling_plot_gpu_N8_halfed.csv",
-        machine="GH200",
-        backend_label="JAX (GPU-CUDA), halfed, 72 ranks/GPU",
-        color="#D97706",
-        cpu_ranks_per_device=72,
-    ),
-    SeriesSpec(
-        path=SCRIPT_DIR / "scaling_plot_N28.csv",
-        machine="GG",
-        backend_label="JAX (CPU), 64 rods/rank",
-        color="#1D4ED8",
-        cpu_ranks_per_device=1,
-    ),
-    SeriesSpec(
-        path=SCRIPT_DIR / "snake_mpi_scaline_4N.csv",
-        machine="GG",
-        backend_label="JAX (CPU), 256 rods/rank",
-        color="#9F1239",
-        cpu_ranks_per_device=1,
-    ),
-    SeriesSpec(
-        path=SCRIPT_DIR / "snake_mpi_scaling.csv",
-        machine="GG",
-        backend_label="JAX (CPU), 32 rods/rank",
-        color="#7C3AED",
-        cpu_ranks_per_device=1,
-    ),
-)
+def _ranks_per_node(path: Path, machine: str) -> int:
+    """
+    MPI ranks represented by one node on the plot x-axis.
 
-BACKEND_ORDER = tuple(spec.backend_label for spec in SERIES_SPECS)
-BACKEND_COLORS = {spec.backend_label: spec.color for spec in SERIES_SPECS}
-
-# machine, backend_label, mpi_size, effective_cpu_ranks, snakes_per_rank,
-# n_snakes, walltime, steps, throughput
-Row = tuple[str, str, int, int, int, int, float, int, float]
+    GH200 keeps one GPU rank per node. GG uses 144 ranks/node, or 72 when the
+    series name contains ``half`` / ``halfed``.
+    """
+    if machine.startswith("GH200"):
+        return 1
+    if machine == "GG_half" or _is_halfed_series(path):
+        return GG_RANKS_PER_NODE_HALF
+    return GG_RANKS_PER_NODE
 
 
-def _aggregate_csv(
-    csv_path: Path,
-    machine: str,
-    backend_label: str,
-    *,
-    cpu_ranks_per_device: int,
-) -> list[Row]:
+def _label_from_path(path: Path, *, snakes_per_rank: int) -> str:
+    """
+    Build a short legend label from the CSV stem and per-rank workload.
+
+    Machine / half packing is shown in the Machine legend, so strip ``gpu``,
+    ``half``, and ``halfed`` from the series name. Keep ``vertical`` as a
+    packing qualifier and ``rods/rank`` for workload size.
+    """
+    stem = path.stem
+    if stem.startswith("scaling_plot_"):
+        stem = stem[len("scaling_plot_") :]
+    if stem.startswith("gpu_"):
+        stem = stem[len("gpu_") :]
+    if stem.endswith("_halfed"):
+        stem = stem[: -len("_halfed")]
+    elif stem.endswith("_half"):
+        stem = stem[: -len("_half")]
+    stem = stem.replace("_vertical", " vertical")
+    stem = stem.replace("_", " ")
+    return f"{stem} ({snakes_per_rank} rods/rank)"
+
+
+def _discover_source_csvs(directory: Path = SCRIPT_DIR) -> list[Path]:
+    """Return every non-combined CSV in the multi-node benchmark folder."""
+    paths = sorted(
+        (path for path in directory.iterdir() if _is_source_csv(path)),
+        key=lambda path: (0 if "gpu" in path.name.lower() else 1, path.name),
+    )
+    assert paths, f"No source CSVs found in {directory}."
+    return paths
+
+
+def _aggregate_csv(csv_path: Path) -> list[Row]:
     """Load per-rank walltimes and reduce each MPI size to max walltime."""
-    assert machine in MACHINE_FULL_NAMES, f"Unknown machine {machine!r}."
-    assert cpu_ranks_per_device > 0, "cpu_ranks_per_device must be positive."
+    machine = _machine_from_path(csv_path)
+    assert machine in MACHINE_FULL_NAMES, f"Unknown machine for {csv_path}."
+    ranks_per_node = _ranks_per_node(csv_path, machine)
     with csv_path.open(newline="") as handle:
         reader = list(csv.DictReader(handle))
     assert reader, f"CSV {csv_path} is empty."
@@ -155,18 +149,25 @@ def _aggregate_csv(
         )
         grouped[key].append(float(raw["rollout_walltime_s"]))
 
+    snakes_per_rank_values = {key[1] for key in grouped}
+    assert len(snakes_per_rank_values) == 1, (
+        f"Mixed snakes_per_rank in {csv_path}: {sorted(snakes_per_rank_values)}"
+    )
+    snakes_per_rank = next(iter(snakes_per_rank_values))
+    series_label = _label_from_path(csv_path, snakes_per_rank=snakes_per_rank)
+
     rows: list[Row] = []
     for (mpi_size, snakes_per_rank, n_snakes, steps), walltimes in grouped.items():
         max_walltime = float(np.max(walltimes))
         assert max_walltime > 0.0, f"Non-positive walltime in {csv_path}."
         throughput = n_snakes * steps / max_walltime
-        effective_cpu_ranks = mpi_size * cpu_ranks_per_device
+        n_nodes = mpi_size / ranks_per_node
         rows.append(
             (
                 machine,
-                backend_label,
+                series_label,
                 mpi_size,
-                effective_cpu_ranks,
+                n_nodes,
                 snakes_per_rank,
                 n_snakes,
                 max_walltime,
@@ -177,32 +178,20 @@ def _aggregate_csv(
     return rows
 
 
-def combine_csvs(specs: tuple[SeriesSpec, ...] = SERIES_SPECS) -> list[Row]:
-    """Merge configured machine CSVs into one long-form table."""
+def combine_csvs(directory: Path = SCRIPT_DIR) -> list[Row]:
+    """Load every source CSV into one long-form table."""
     combined: list[Row] = []
-    for spec in specs:
-        resolved = _resolve_series_path(spec.path)
-        if resolved is None:
-            message = f"Missing CSV for {spec.backend_label!r}: {spec.path}"
-            assert not spec.required, message
-            print(f"skipping optional series: {message}")
-            continue
-        combined.extend(
-            _aggregate_csv(
-                resolved,
-                spec.machine,
-                spec.backend_label,
-                cpu_ranks_per_device=spec.cpu_ranks_per_device,
-            )
-        )
+    for csv_path in _discover_source_csvs(directory):
+        ranks_per_node = _ranks_per_node(csv_path, _machine_from_path(csv_path))
+        print(f"loading {csv_path.name} (x = mpi_size / {ranks_per_node} -> nodes)")
+        combined.extend(_aggregate_csv(csv_path))
     assert combined, "No benchmark CSVs were loaded."
 
-    backend_rank = {label: index for index, label in enumerate(BACKEND_ORDER)}
     machine_rank = {label: index for index, label in enumerate(MACHINE_ORDER)}
     combined.sort(
         key=lambda row: (
             machine_rank[row[0]],
-            backend_rank[row[1]],
+            row[1],
             row[3],
         )
     )
@@ -210,94 +199,151 @@ def combine_csvs(specs: tuple[SeriesSpec, ...] = SERIES_SPECS) -> list[Row]:
 
 
 def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
-    """Plot log-log walltime and throughput weak-scaling curves."""
+    """Plot log-log walltime-per-rod vs node count."""
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
-            "font.size": 11,
+            "font.size": 10,
             "axes.labelsize": 12,
             "axes.titlesize": 13,
-            "legend.fontsize": 10,
-            "xtick.labelsize": 11,
-            "ytick.labelsize": 11,
+            "legend.fontsize": 8,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
             "axes.spines.top": False,
             "axes.spines.right": False,
         }
     )
 
-    series: dict[tuple[str, str], list[tuple[int, float, float, int]]] = defaultdict(
-        list
-    )
+    series: dict[tuple[str, str], list[tuple[float, float, int]]] = defaultdict(list)
     for (
         machine,
-        backend_label,
+        series_label,
         _mpi_size,
-        effective_cpu_ranks,
+        n_nodes,
         snakes_per_rank,
         _n,
         walltime,
         _steps,
-        thr,
+        _thr,
     ) in rows:
-        series[(machine, backend_label)].append(
-            (effective_cpu_ranks, walltime, thr, snakes_per_rank)
-        )
+        series[(machine, series_label)].append((n_nodes, walltime, snakes_per_rank))
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.0, 6.2))
-    walltime_ax, throughput_ax = axes
+    series_labels = sorted({label for _machine, label in series})
+    default_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    series_colors = {
+        label: default_cycle[index % len(default_cycle)]
+        for index, label in enumerate(series_labels)
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 6.0))
+    walltime_ax = axes[0]
+    blank_ax = axes[1]
+    blank_ax.set_visible(False)
 
     for machine in MACHINE_ORDER:
         style = MACHINE_STYLES[machine]
-        for backend in BACKEND_ORDER:
-            points = series.get((machine, backend))
+        for series_label in series_labels:
+            if "pyelastica" in series_label.lower():
+                continue
+            points = series.get((machine, series_label))
             if not points:
                 continue
             points = sorted(points, key=lambda item: item[0])
-            x_ranks = np.asarray([item[0] for item in points], dtype=np.float64)
+            n_nodes = np.asarray([item[0] for item in points], dtype=np.float64)
             walltimes = np.asarray([item[1] for item in points], dtype=np.float64)
-            throughputs = np.asarray([item[2] for item in points], dtype=np.float64)
-            snakes_per_rank = np.asarray(
-                [item[3] for item in points], dtype=np.float64
-            )
+            snakes_per_rank = np.asarray([item[2] for item in points], dtype=np.float64)
             walltime_per_rod = walltimes / snakes_per_rank
-            color = BACKEND_COLORS[backend]
-            common = {
-                "color": color,
-                "linestyle": style["linestyle"],
-                "marker": style["marker"],
-                "markersize": style["markersize"],
-                "linewidth": style["linewidth"],
-                "markeredgewidth": 1.4,
-                "markeredgecolor": color,
-                "markerfacecolor": color if style["filled"] else "none",
-            }
-            walltime_ax.loglog(x_ranks, walltime_per_rod, **common)
-            throughput_ax.loglog(x_ranks, throughputs, **common)
+            color = series_colors[series_label]
+            walltime_ax.loglog(
+                n_nodes,
+                walltime_per_rod,
+                color=color,
+                linestyle=style["linestyle"],
+                marker=style["marker"],
+                markersize=style["markersize"],
+                linewidth=style["linewidth"],
+                markeredgewidth=1.2,
+                markeredgecolor=color,
+                markerfacecolor=color if style["filled"] else "none",
+            )
 
-    for ax in axes:
-        ax.set_xlabel("effective CPU ranks (1 GPU = 144, halfed = 72)")
-        ax.grid(True, which="major", color="#D0D5DD", linewidth=0.9)
-        ax.grid(True, which="minor", color="#EEF0F3", linewidth=0.6)
-        ax.set_axisbelow(True)
+    # PyElastica: single first-point marker (not a scaling curve).
+    pyelastica_anchor: tuple[float, float] | None = None
+    for series_label in series_labels:
+        if "pyelastica" not in series_label.lower():
+            continue
+        if "half" in series_label.lower():
+            continue
+        for machine in MACHINE_ORDER:
+            points = series.get((machine, series_label))
+            if not points:
+                continue
+            ordered = sorted(points, key=lambda item: item[0])
+            n_nodes_value, walltime, snakes_per_rank = ordered[0]
+            pyelastica_anchor = (n_nodes_value, walltime / snakes_per_rank)
+            break
+        if pyelastica_anchor is not None:
+            break
+    if pyelastica_anchor is not None:
+        anchor_x, anchor_y = pyelastica_anchor
+        walltime_ax.plot(
+            [anchor_x],
+            [anchor_y],
+            linestyle="none",
+            marker="*",
+            markersize=16,
+            color="#DC2626",
+            markeredgecolor="#DC2626",
+            zorder=6,
+        )
+        walltime_ax.annotate(
+            "PyElastica",
+            xy=(anchor_x, anchor_y),
+            xytext=(anchor_x * 1.0, anchor_y * 2.5),
+            textcoords="data",
+            fontsize=12,
+            fontweight="semibold",
+            color="k",
+            ha="left",
+            va="bottom",
+            arrowprops={
+                "arrowstyle": "->",
+                "color": "k",
+                "lw": 1.6,
+                "connectionstyle": "arc3,rad=0.15",
+            },
+        )
 
-    walltime_ax.set_ylabel("max per-rank walltime (s / rod)")
+    walltime_ax.set_xlabel("number of nodes")
+    walltime_ax.set_ylabel("max walltime (s / rod)")
     walltime_ax.set_title("Weak-scaling walltime per rod")
-    throughput_ax.set_ylabel("throughput (rod-steps / s)")
-    throughput_ax.set_title("Weak-scaling throughput")
+    walltime_ax.grid(True, which="major", color="#D0D5DD", linewidth=0.9)
+    walltime_ax.grid(True, which="minor", color="#EEF0F3", linewidth=0.6)
+    walltime_ax.set_axisbelow(True)
 
-    backend_handles = [
+    series_handles = [
         Line2D(
             [0],
             [0],
-            color=BACKEND_COLORS[backend],
-            linewidth=2.5,
-            # marker="o",
-            # markersize=7,
-            label=backend,
+            color=series_colors[label],
+            linewidth=2.2,
+            label=label,
         )
-        for backend in BACKEND_ORDER
-        if any(row[1] == backend for row in rows)
+        for label in series_labels
+        if "pyelastica" not in label.lower()
     ]
+    if pyelastica_anchor is not None:
+        series_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="#DC2626",
+                linestyle="none",
+                marker="*",
+                markersize=12,
+                label="PyElastica",
+            )
+        )
     machine_handles = [
         Line2D(
             [0],
@@ -311,45 +357,46 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
                 "#4A5568" if MACHINE_STYLES[machine]["filled"] else "none"
             ),
             markeredgecolor="#4A5568",
-            markeredgewidth=1.4,
+            markeredgewidth=1.2,
             label=MACHINE_FULL_NAMES[machine],
         )
         for machine in MACHINE_ORDER
         if any(row[0] == machine for row in rows)
     ]
 
-    backend_legend = fig.legend(
-        handles=backend_handles,
+    series_legend = fig.legend(
+        handles=series_handles,
         loc="upper left",
         ncol=1,
         frameon=False,
-        bbox_to_anchor=(0.05, 0.20),
-        handlelength=2.4,
-        labelspacing=0.55,
-        title="Workload",
-        title_fontsize=11,
+        bbox_to_anchor=(0.05, 0.15),
+        handlelength=2.0,
+        labelspacing=0.35,
+        columnspacing=1.0,
+        title="Series",
+        title_fontsize=10,
         borderaxespad=0.0,
         alignment="left",
+        fontsize=7.5,
     )
-    fig.add_artist(backend_legend)
+    fig.add_artist(series_legend)
     fig.legend(
         handles=machine_handles,
         loc="upper left",
         ncol=1,
         frameon=False,
-        bbox_to_anchor=(0.48, 0.20),
-        handlelength=2.8,
-        labelspacing=0.55,
+        bbox_to_anchor=(0.25, 0.15),
+        handlelength=2.6,
+        labelspacing=0.40,
         title="Machine",
-        title_fontsize=11,
+        title_fontsize=10,
         borderaxespad=0.0,
         alignment="left",
     )
 
     fig.suptitle(
         f"Weak scaling (snake-activated)\n"
-        f"({steps} steps, 20 elements/rod; "
-        f"1 GPU = 144 CPU ranks, halfed = 72)",
+        f"({steps} steps; CPU - 64 rods/rank; GPU - 9216 rods/node)",
         fontsize=15,
         fontweight="semibold",
         x=0.02,
@@ -360,8 +407,8 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
     fig.subplots_adjust(
         left=0.08,
         right=0.98,
-        top=0.82,
-        bottom=0.32,
+        top=0.84,
+        bottom=0.26,
         wspace=0.13,
     )
 
@@ -387,7 +434,7 @@ def plot_scaling(rows: list[Row], *, output: Path, steps: int) -> None:
     help="Combined weak-scaling plot output path.",
 )
 def main(csv_output: Path, plot_output: Path) -> None:
-    """Combine machine CSVs and write a two-panel weak-scaling figure."""
+    """Combine all machine CSVs and write a weak-scaling walltime figure."""
     combined = combine_csvs()
     steps = combined[0][7]
     assert all(row[7] == steps for row in combined), "Mixed step counts across CSVs."
@@ -398,9 +445,9 @@ def main(csv_output: Path, plot_output: Path) -> None:
         writer.writerow(
             (
                 "machine",
-                "backend_label",
+                "series_label",
                 "mpi_size",
-                "effective_cpu_ranks",
+                "n_nodes",
                 "snakes_per_rank",
                 "n_snakes",
                 "rollout_walltime_s",
