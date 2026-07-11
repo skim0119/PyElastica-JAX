@@ -10,6 +10,12 @@ The goal is to scale. If your problem is below an order of 100~ elements, this f
 > Currently under development. All features are experimental, and interface are subject to change without detailed discussion. Please leave issues if you have any suggestions or recommendations.
 > Due to the style difference between `JAX` and `numba`, the implementation in original PyElastica package would be mostly not compatible. The style of setting up the simulation is kept same.
 
+## Benchmark
+
+### Single-node, self-actuated
+
+![Snake throughput scaling](https://raw.githubusercontent.com/skim0119/PyElastica-JAX/assets/snake_throughput_scaling_combined.png)
+
 ## Before you start
 
 `JAX`'s default floating point precision is `float32`, but the Cosserat rod numerics is not very stable with `float32`. User should enable `float64` for more stable numerics. It is not decided yet whether to make this the default behavior within `PyElastica-JAX`.
