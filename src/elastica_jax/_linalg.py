@@ -28,6 +28,28 @@ def _jax_batch_matvec(
     return out
 
 
+def _jax_batch_transpose_matvec(
+    matrix_collection: jax.Array, vector_collection: jax.Array
+) -> jax.Array:
+    out = jnp.empty_like(vector_collection)
+    out = out.at[0, :].set(
+        matrix_collection[0, 0, :] * vector_collection[0, :]
+        + matrix_collection[1, 0, :] * vector_collection[1, :]
+        + matrix_collection[2, 0, :] * vector_collection[2, :]
+    )
+    out = out.at[1, :].set(
+        matrix_collection[0, 1, :] * vector_collection[0, :]
+        + matrix_collection[1, 1, :] * vector_collection[1, :]
+        + matrix_collection[2, 1, :] * vector_collection[2, :]
+    )
+    out = out.at[2, :].set(
+        matrix_collection[0, 2, :] * vector_collection[0, :]
+        + matrix_collection[1, 2, :] * vector_collection[1, :]
+        + matrix_collection[2, 2, :] * vector_collection[2, :]
+    )
+    return out
+
+
 def _jax_batch_matmul(
     first_matrix_collection: jax.Array, second_matrix_collection: jax.Array
 ) -> jax.Array:

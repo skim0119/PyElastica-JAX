@@ -39,6 +39,7 @@ from elastica_jax._linalg import (
     _jax_batch_dot,
     _jax_batch_matmul,
     _jax_batch_matvec,
+    _jax_batch_transpose_matvec,
 )
 from elastica_jax._rotations import _jax_get_rotation_matrix, _jax_inv_rotate
 from elastica_jax.memory_block.memory_block_rod_jax import (
@@ -88,27 +89,15 @@ def _jax_compute_internal_forces_and_torques_one_rod(
     position_collection: jax.Array,
     velocity_collection: jax.Array,
     volume: jax.Array,
-    lengths: jax.Array,
-    tangents: jax.Array,
-    radius: jax.Array,
     rest_lengths: jax.Array,
     rest_voronoi_lengths: jax.Array,
-    dilatation: jax.Array,
-    dilatation_rate: jax.Array,
-    voronoi_dilatation: jax.Array,
     director_collection: jax.Array,
-    sigma: jax.Array,
     rest_sigma: jax.Array,
     shear_matrix: jax.Array,
-    internal_stress: jax.Array,
-    internal_forces: jax.Array,
     mass_second_moment_of_inertia: jax.Array,
     omega_collection: jax.Array,
-    internal_torques: jax.Array,
     bend_matrix: jax.Array,
     rest_kappa: jax.Array,
-    kappa: jax.Array,
-    internal_couple: jax.Array,
 ) -> tuple[jax.Array, ...]:
     """Single straight-rod force/torque kernel (no ghosts, no periodic BC)."""
     position_diff = _jax_position_difference(position_collection)
@@ -123,9 +112,7 @@ def _jax_compute_internal_forces_and_torques_one_rod(
     ) - jnp.array([[0.0], [0.0], [1.0]], dtype=position_collection.dtype)
     internal_stress = _jax_batch_matvec(shear_matrix, sigma - rest_sigma)
     cosserat_internal_stress = (
-        _jax_batch_matvec(
-            jnp.transpose(director_collection, (1, 0, 2)), internal_stress
-        )
+        _jax_batch_transpose_matvec(director_collection, internal_stress)
         / dilatation[jnp.newaxis, :]
     )
     internal_forces = _jax_two_point_difference(cosserat_internal_stress)
@@ -667,27 +654,15 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["position_collection"],
             state["velocity_collection"],
             state["volume"],
-            state["lengths"],
-            state["tangents"],
-            state["radius"],
             state["rest_lengths"],
             state["rest_voronoi_lengths"],
-            state["dilatation"],
-            state["dilatation_rate"],
-            state["voronoi_dilatation"],
             state["director_collection"],
-            state["sigma"],
             state["rest_sigma"],
             state["shear_matrix"],
-            state["internal_stress"],
-            state["internal_forces"],
             state["mass_second_moment_of_inertia"],
             state["omega_collection"],
-            state["internal_torques"],
             state["bend_matrix"],
             state["rest_kappa"],
-            state["kappa"],
-            state["internal_couple"],
         )
         updated = dict(state)
         updated["lengths"] = lengths

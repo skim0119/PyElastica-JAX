@@ -15,6 +15,7 @@ from elastica_jax._linalg import (
     _jax_batch_dot,
     _jax_batch_matmul,
     _jax_batch_matvec,
+    _jax_batch_transpose_matvec,
 )
 
 
@@ -61,6 +62,28 @@ def test_jax_batch_matmul(blocksize, rng):
         )
 
     assert_allclose(test_matrix_collection, correct_matrix_collection)
+
+
+@pytest.mark.parametrize("blocksize", [8, 32])
+def test_jax_batch_transpose_matvec(blocksize, rng):
+    input_matrix_collection = rng.standard_normal((3, 3, blocksize))
+    input_vector_collection = rng.standard_normal((3, blocksize))
+
+    with jax.default_device(CPU_DEVICE):
+        test_vector_collection = np.asarray(
+            _jax_batch_transpose_matvec(
+                jax.numpy.asarray(input_matrix_collection, dtype=np.float64),
+                jax.numpy.asarray(input_vector_collection, dtype=np.float64),
+            )
+        )
+
+    correct_vector_collection = [
+        np.dot(input_matrix_collection[..., i].T, input_vector_collection[..., i])
+        for i in range(blocksize)
+    ]
+    correct_vector_collection = np.array(correct_vector_collection).T
+
+    assert_allclose(test_vector_collection, correct_vector_collection)
 
 
 @pytest.mark.parametrize("dim", [3])
