@@ -87,7 +87,10 @@ def test_position_verlet_integrates_two_blocks_on_separate_devices():
     jax.block_until_ready(rod_block_2.jax_get_state()["position_collection"])
 
     simulator.jax_independent_block_executions = lambda: None
-    with pytest.raises(AssertionError, match="Cross-block coupled operations"):
+    with pytest.raises(
+        AssertionError,
+        match="Cross-block coupled operations are not supported across devices",
+    ):
         stepper.integrate(
             simulator,
             time=0.002,

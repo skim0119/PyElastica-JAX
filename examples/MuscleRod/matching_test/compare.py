@@ -8,7 +8,6 @@ import numpy as np
 import jax
 from tqdm import tqdm
 
-import elastica as ea
 import elastica_jax as eaj
 from elastica import (
     BaseSystemCollection,
@@ -237,7 +236,7 @@ def run_jax_simulation(
 
     # Run
     start = time.perf_counter()
-    final_time = stepper.integrate(
+    stepper.integrate(
         simulator,
         time=np.float64(0.0),
         final_time=FINAL_TIME,

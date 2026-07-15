@@ -182,9 +182,9 @@ def main(
         _export_scaling_plot(series, steps=steps, output=output)
         return
 
-    assert not (
-        skip_cuda and skip_cpu and skip_gpu2x and skip_pyelastica
-    ), "At least one backend sweep is required."
+    assert not (skip_cuda and skip_cpu and skip_gpu2x and skip_pyelastica), (
+        "At least one backend sweep is required."
+    )
 
     series: dict[str, list[SweepPoint]] = {}
 

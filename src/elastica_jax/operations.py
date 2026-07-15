@@ -56,12 +56,12 @@ class OneEndFixedJax(NoOpsJax):
     """JAX equivalent of fixing the first node and first director."""
 
     def __init__(self, *, _system: object) -> None:
-        self.fixed_position_collection: JAXVectorArray = (
-            _system.position_collection[..., 0].copy()
-        )
-        self.fixed_directors_collection: np.ndarray = (
-            _system.director_collection[..., 0].copy()
-        )
+        self.fixed_position_collection: JAXVectorArray = _system.position_collection[
+            ..., 0
+        ].copy()
+        self.fixed_directors_collection: np.ndarray = _system.director_collection[
+            ..., 0
+        ].copy()
 
     def jax_operate_constrain_values(
         self,

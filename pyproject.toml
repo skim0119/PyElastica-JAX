@@ -7,9 +7,6 @@ authors = [
     {name = "Seung Hyun Kim", email = "skim0119@gmail.com"},
 ]
 license = "MIT"
-repository = "https://github.com/skim0119/PyElastica-JAX"
-homepage = "https://www.cosseratrods.org/"
-documentation = "https://docs.cosseratrods.org/en/latest/"
 
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -24,6 +21,11 @@ classifiers = [
 ]
 
 requires-python = ">=3.11"
+
+[project.urls]
+Repository = "https://github.com/skim0119/PyElastica-JAX"
+Homepage = "https://www.cosseratrods.org/"
+Documentation = "https://docs.cosseratrods.org/en/latest/"
 
 dependencies = [
     "pyelastica",
@@ -49,7 +51,12 @@ sources = ["src"]
 packages = ["src/elastica_jax"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/elastica_jax"]
+include = [
+    "src/elastica_jax",
+    "tests",
+    "README.md",
+    "LICENSE",
+]
 
 [project.optional-dependencies]
 docs = [
@@ -65,7 +72,6 @@ docs = [
     "sphinxcontrib-video>=0.4.1",
 ]
 dev = [
-    "black",
     "pytest",
     "coverage",
     "pre-commit",
@@ -75,37 +81,40 @@ dev = [
     "pytest-mock",
     "codecov",
     "click",
-    "autoflake",
     "mypy",
     "mypy-extensions",
-    "flake8",
+    "ruff",
 ]
 
-[tool.black]
-# https://github.com/psf/black
-target-version = ["py312"]
+[tool.ruff]
+target-version = "py312"
 line-length = 88
-color = true
-exclude = '''
-/(
-    \.git
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | _build
-    | buck-out
-    | build
-    | dist
-    | env
-    | venv
-)/
-'''
+extend-exclude = [
+    "build",
+    "dist",
+    "docs/_build",
+    "docs/_gallery",
+    "docs/gen_modules",
+]
 
-[tool.autoflake]
-ignore-init-module-imports = true
-ignore-pass-statements = true
-ignore-pass-after-docstring = true
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+]
+ignore = [
+    "E402",
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/elastica_jax/__init__.py" = ["F401"]
+"src/elastica_jax/memory_block/__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
 
 [tool.pytest.ini_options]
 # https://docs.pytest.org/en/6.2.x/customize.html#pyproject-toml
@@ -175,7 +184,7 @@ show_missing = true
 branch = true
 omit = [
     "*/.local/*",
-	"setup.py",
+    "setup.py",
     "src/elastica_jax/experimental/*",
     "src/elastica_jax/**/protocol.py",
 ]

@@ -13,15 +13,15 @@ jax.config.update("jax_enable_x64", True)
 
 
 def _reference_and_jax_buffers(
-  *,
-  centers: np.ndarray,
-  rod_ids: np.ndarray,
-  axes: np.ndarray,
-  lengths: np.ndarray,
-  radii: np.ndarray,
-  cell_size: float,
-  max_pairs: int,
-  max_cell_occ: int = 64,
+    *,
+    centers: np.ndarray,
+    rod_ids: np.ndarray,
+    axes: np.ndarray,
+    lengths: np.ndarray,
+    radii: np.ndarray,
+    cell_size: float,
+    max_pairs: int,
+    max_cell_occ: int = 64,
 ):
     host = rebuild_spatial_hash_pairs(
         centers=centers,
@@ -42,10 +42,17 @@ def _reference_and_jax_buffers(
         max_pairs=max_pairs,
         max_cell_occ=max_cell_occ,
     )
-    return host, np.asarray(device_count), np.asarray(device_first), np.asarray(device_second)
+    return (
+        host,
+        np.asarray(device_count),
+        np.asarray(device_first),
+        np.asarray(device_second),
+    )
 
 
-def _pair_set(first: np.ndarray, second: np.ndarray, count: int) -> set[tuple[int, int]]:
+def _pair_set(
+    first: np.ndarray, second: np.ndarray, count: int
+) -> set[tuple[int, int]]:
     pairs: set[tuple[int, int]] = set()
     for slot in range(int(count)):
         left = int(first[slot])

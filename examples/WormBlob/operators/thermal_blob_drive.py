@@ -92,8 +92,7 @@ class WarmBlobDriveJax(eaj.NoBlockOpJax):
         )
         offsets = np.arange(n_elements, dtype=np.int32)
         self.element_indices = (
-            _system.start_idx_in_rod_elems[:, None].astype(np.int32)
-            + offsets[None, :]
+            _system.start_idx_in_rod_elems[:, None].astype(np.int32) + offsets[None, :]
         )
         self.pull_force_scale = pull_force_scale
         self.time_period = time_period
@@ -213,11 +212,7 @@ def _snake_actuation_torques(
     phase = jnp.clip((time - start) / time_period, 0.0, 1.0)
     ramp_factor = 0.5 * (1.0 - jnp.cos(jnp.pi * phase))
     torque_magnitude = (
-        0.5
-        * ramp_factor
-        * actuation_amplitude_scale
-        * spline_amplitude
-        * wave
+        0.5 * ramp_factor * actuation_amplitude_scale * spline_amplitude * wave
     )
 
     torque_world = torque_magnitude[None, None, :] * torque_axis[None, :, None]

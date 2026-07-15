@@ -117,7 +117,7 @@ def benchmark_size(
             device_dtype=dtype,
             **sim_kwargs,
         )
-        jax.block_until_ready(jax_block.position_collection_device)
+        jax.block_until_ready(jax_block)
         initial_host_state = snapshot_jax_state_to_host(jax_block.jax_get_state())
         save_jax_state_npz(jax_file, initial_host_state)
 
@@ -127,7 +127,7 @@ def benchmark_size(
                 device_dtype=dtype,
                 **sim_kwargs,
             )
-            jax.block_until_ready(block.position_collection_device)
+            jax.block_until_ready(block)
 
         jax_instantiate_avg = time_average(iterations, _instantiate_jax_sim)
         jax_save_avg = time_average(
@@ -164,9 +164,9 @@ def benchmark_size(
 def main() -> None:
     args = parse_args()
     assert args.min_n_snakes_exp >= 0, "min-n-snakes-exp must be nonnegative."
-    assert (
-        args.max_n_snakes_exp >= args.min_n_snakes_exp
-    ), "max-n-snakes-exp must be greater than or equal to min-n-snakes-exp."
+    assert args.max_n_snakes_exp >= args.min_n_snakes_exp, (
+        "max-n-snakes-exp must be greater than or equal to min-n-snakes-exp."
+    )
     assert args.n_elem > 1, "n-elem must be greater than 1."
     assert args.dt > 0.0, "dt must be positive."
     assert args.iterations > 0, "iterations must be positive."
@@ -212,15 +212,15 @@ def main() -> None:
             )
         )
         if not args.no_numba:
-            assert (
-                result.numba_instantiate_seconds is not None
-            ), "Numba instantiation timing must be available when Numba is enabled."
-            assert (
-                result.numba_save_seconds is not None
-            ), "Numba save timing must be available when Numba is enabled."
-            assert (
-                result.numba_load_seconds is not None
-            ), "Numba load timing must be available when Numba is enabled."
+            assert result.numba_instantiate_seconds is not None, (
+                "Numba instantiation timing must be available when Numba is enabled."
+            )
+            assert result.numba_save_seconds is not None, (
+                "Numba save timing must be available when Numba is enabled."
+            )
+            assert result.numba_load_seconds is not None, (
+                "Numba load timing must be available when Numba is enabled."
+            )
             report_lines.extend(
                 (
                     "numba_instantiate_avg_seconds: "

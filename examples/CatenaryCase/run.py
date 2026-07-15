@@ -85,7 +85,8 @@ def main(
     current_time = 0.0
 
     for frame_idx in tqdm(range(n_frames), desc="Catenary rollout"):
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         callback_data["time"].append(current_time)
         callback_data["position"].append(extract_positions(block))
 

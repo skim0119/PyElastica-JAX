@@ -40,7 +40,7 @@ jobs:
         run: make check-codestyle
       - name: Run tests
         if: always()
-        run: make test
+        run: make test_coverage
       - name: Typechecking
         if: always()
         run: make mypy

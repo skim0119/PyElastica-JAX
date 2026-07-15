@@ -33,9 +33,7 @@ _JAX_ROD_BLOCK_TYPES = (
     _MpiCosseratRodBlock,
 )
 JAXRodBlockSystem = (
-    _CosseratRodMemoryBlock
-    | _CosseratRodVerticalMemoryBlock
-    | _MpiCosseratRodBlock
+    _CosseratRodMemoryBlock | _CosseratRodVerticalMemoryBlock | _MpiCosseratRodBlock
 )
 
 # Stage hooks registered during finalize(). Each row is:
@@ -211,7 +209,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     @classmethod
     def _per_rod_indices(
         cls,
-        block_system: (JAXRodBlockSystem),
+        block_system: JAXRodBlockSystem,
     ) -> dict[str, jax.Array]:
         return {
             "node": jnp.asarray(
@@ -379,7 +377,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         cls,
         *,
         block_state_idx: int,
-        block_system: (JAXRodBlockSystem),
+        block_system: JAXRodBlockSystem,
         operators: Any | tuple[Any, ...],
     ) -> Callable[..., tuple[Any, ...]]:
         def apply(*, states, time):  # type: ignore[no-untyped-def]

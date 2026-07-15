@@ -14,7 +14,9 @@ from elastica_jax.contact.spatial_hash_jax import rebuild_all_pairs_jax
 jax.config.update("jax_enable_x64", True)
 
 
-def _pair_set(first: np.ndarray, second: np.ndarray, count: int) -> set[tuple[int, int]]:
+def _pair_set(
+    first: np.ndarray, second: np.ndarray, count: int
+) -> set[tuple[int, int]]:
     pairs: set[tuple[int, int]] = set()
     for slot in range(int(count)):
         left = int(first[slot])

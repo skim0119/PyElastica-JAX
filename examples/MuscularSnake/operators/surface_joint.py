@@ -131,9 +131,7 @@ def _apply_surface_joint(
         + rod_two_view.position_collection[:, muscle_idx + 1]
     )
 
-    offset_rod_one = (
-        0.5 * offset_btw_rods / jnp.sqrt(rod_one_view.dilatation[body_idx])
-    )
+    offset_rod_one = 0.5 * offset_btw_rods / jnp.sqrt(rod_one_view.dilatation[body_idx])
     offset_rod_two = (
         0.5 * offset_btw_rods / jnp.sqrt(rod_two_view.dilatation[muscle_idx])
     )

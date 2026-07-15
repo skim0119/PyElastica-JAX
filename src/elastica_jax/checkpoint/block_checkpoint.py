@@ -41,9 +41,9 @@ def _checkpoint_group(handle: h5py.File) -> h5py.Group:
 def read_block_checkpoint_layout(path: Path | str) -> BlockCheckpointLayout:
     """Read checkpoint metadata without materializing block arrays."""
     with h5py.File(path, "r") as handle:
-        assert (
-            int(handle.attrs["version"]) == CHECKPOINT_VERSION
-        ), f"Unsupported block checkpoint version in {path!s}."
+        assert int(handle.attrs["version"]) == CHECKPOINT_VERSION, (
+            f"Unsupported block checkpoint version in {path!s}."
+        )
         return BlockCheckpointLayout(
             n_rods=int(handle.attrs["n_rods"]),
             n_elements_per_rod=int(handle.attrs["n_elements_per_rod"]),

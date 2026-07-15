@@ -22,10 +22,14 @@ from snake_operation import (  # noqa: E402
     GravityPlaneContactBlockJax,
     SnakeMuscleTorquesBlockJax,
 )
-from examples.ContinuumSnakeGPUCase.run_continuum_snake_gpu import (
+from examples.ContinuumSnakeCase.environment import (  # noqa: E402
+    build_rod,
+)
+from examples.ContinuumSnakeCase.operators import (  # noqa: E402
     SnakeMuscleTorquesJax,
     SnakePlaneContactJax,
-    build_rod,
+)
+from _jax_snake_common import (  # noqa: E402
     default_b_coeff,
 )
 from elastica_jax.memory_block.memory_block_rod_jax import (  # noqa: E402
@@ -54,7 +58,40 @@ def _single_rod_metadata(block: _CosseratRodMemoryBlock) -> JAXRodViewMetadata:
 
 
 def test_block_snake_ops_match_single_rod_sequence() -> None:
-    rod = build_rod(n_elem=10)
+    class _SnakeParameters:
+        n_elem = 10
+        base_length = 0.35
+        density = 1000.0
+        youngs_modulus = 1.0e6
+        poisson_ratio = 0.5
+        period = 2.0
+        gravitational_acc = -9.80665
+        slip_velocity_tol = 1.0e-8
+        froude = 0.1
+        contact_k = 1.0
+        contact_nu = 1.0e-6
+
+        @property
+        def base_radius(self) -> float:
+            return self.base_length * 0.011
+
+        @property
+        def shear_modulus(self) -> float:
+            return self.youngs_modulus / (self.poisson_ratio + 1.0)
+
+        @property
+        def kinetic_mu_array(self) -> np.ndarray:
+            mu = self.base_length / (
+                self.period * self.period * abs(self.gravitational_acc) * self.froude
+            )
+            return np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
+
+        @property
+        def static_mu_array(self) -> np.ndarray:
+            return np.zeros(3, dtype=np.float64)
+
+    parameters = _SnakeParameters()
+    rod = build_rod(parameters)
     with jax.default_device(jax.devices("cpu")[0]):
         block = eaj.configure_rod_block(device_dtype=np.float64)([rod], [0])
     base_state = block.jax_compute_internal_forces_and_torques(

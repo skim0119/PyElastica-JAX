@@ -266,9 +266,9 @@ def build_simulator(
 
     simulator.finalize()
     final_systems = tuple(simulator.final_systems())
-    assert (
-        len(final_systems) == 2
-    ), "Rod-sphere JAX example expects one rod block and one rigid-body block."
+    assert len(final_systems) == 2, (
+        "Rod-sphere JAX example expects one rod block and one rigid-body block."
+    )
     rod_block = next(
         system
         for system in final_systems

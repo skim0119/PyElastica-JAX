@@ -59,13 +59,13 @@ class MuscleConfig:
             n_muscles,
             n_elements,
         ), "max_muscle_stress must have shape (n_muscles, n_elements)."
-        assert transverse.shape == (
-            n_muscles,
-        ), "transverse_muscle must have shape (n_muscles,)."
+        assert transverse.shape == (n_muscles,), (
+            "transverse_muscle must have shape (n_muscles,)."
+        )
         assert np.all(area >= 0.0), "rest_muscle_area must be nonnegative."
-        assert (
-            self.force_length_coefficient >= 0.0
-        ), "force_length_coefficient must be nonnegative."
+        assert self.force_length_coefficient >= 0.0, (
+            "force_length_coefficient must be nonnegative."
+        )
         rest_length = self.muscle_rest_length
         if rest_length is not None:
             rest_length = np.asarray(rest_length, dtype=np.float64)
@@ -73,9 +73,9 @@ class MuscleConfig:
                 n_muscles,
                 n_elements,
             ), "muscle_rest_length must have shape (n_muscles, n_elements)."
-            assert np.all(
-                rest_length > 0.0
-            ), "muscle_rest_length must be strictly positive."
+            assert np.all(rest_length > 0.0), (
+                "muscle_rest_length must be strictly positive."
+            )
         activation_parameters = {}
         for name in (
             "activation_offset",
@@ -110,9 +110,9 @@ class MuscleConfig:
         **activation_kwargs: Any,
     ) -> Self:
         """Create a configuration from an already blocked legacy actuator."""
-        assert (
-            batch_muscle._blocked
-        ), "BatchMuscle must be blocked against a rod before conversion."
+        assert batch_muscle._blocked, (
+            "BatchMuscle must be blocked against a rod before conversion."
+        )
         stress = np.asarray(batch_muscle.max_muscle_stress, dtype=np.float64)
         return cls(
             ratio_muscle_position=np.asarray(
@@ -189,9 +189,9 @@ def _compute_muscle_loads(
         rod.voronoi_dilatation,
         config,
     )
-    assert (
-        config.muscle_rest_length is not None
-    ), "muscle_rest_length must be initialized before computing muscle loads."
+    assert config.muscle_rest_length is not None, (
+        "muscle_rest_length must be initialized before computing muscle loads."
+    )
     normalized_length = length / config.muscle_rest_length
     weight = np.maximum(
         0.0,

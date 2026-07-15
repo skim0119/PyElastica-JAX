@@ -8,7 +8,9 @@ import elastica as ea
 import elastica_jax as eaj
 
 
-def distinct_body_and_muscle_rod_types() -> tuple[type[ea.CosseratRod], type[ea.CosseratRod]]:
+def distinct_body_and_muscle_rod_types() -> tuple[
+    type[ea.CosseratRod], type[ea.CosseratRod]
+]:
     """Return distinct Cosserat rod subclasses for separate memory blocks."""
     skip_attrs = {
         "__dict__",

@@ -4,11 +4,9 @@ from collections.abc import Callable
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from ..protocol import (
     JAXBlock,
-    JAXBlockExecution,
     JAXBlockStages,
     JAXPyTree,
     JAXSystems,
@@ -56,10 +54,13 @@ class PositionVerletJAX:
         target_time = np.float64(final_time)
         simulation_dt = np.float64(dt)
         duration = float(target_time - simulation_time)
-        n_steps = int(np.round(duration / float(simulation_dt)))
+        rounded_steps = np.round(duration / float(simulation_dt))
+        assert np.isclose(duration, float(simulation_dt) * rounded_steps), (
+            "final_time - time must be an integer multiple of dt."
+        )
+        n_steps = int(rounded_steps)
 
         systems = tuple(system_collection.final_systems())
-        assert systems, "system_collection must contain at least one JAX block."
         states = tuple(system.jax_get_state() for system in systems)
 
         reference_dtype = self._reference_dtype_from_states(states)
@@ -71,24 +72,29 @@ class PositionVerletJAX:
             independent_executions = (
                 system_collection.jax_independent_block_executions()
             )
-        if independent_executions is not None:
-            final_time_jax, final_states = self._integrate_independent_blocks(
-                systems=systems,
-                states=states,
-                executions=independent_executions,
-                n_steps=n_steps,
-                simulation_time=simulation_time,
-                simulation_dt=simulation_dt,
+            assert len(independent_executions) == len(systems), (
+                "Independent block execution metadata must match finalized systems."
             )
+            final_times: list[jax.Array] = []
+            final_states: list[JAXPyTree] = []
+            for system, state, execution in zip(
+                systems, states, independent_executions, strict=True
+            ):
+                block_time, updated_state = self._run_compiled_block(
+                    system=system,
+                    state=state,
+                    stages=execution.stages,
+                    n_steps=n_steps,
+                    simulation_time=simulation_time,
+                    simulation_dt=simulation_dt,
+                )
+                final_times.append(block_time)
+                final_states.append(updated_state)
+            assert final_times, "At least one JAX block is required for integration."
+            final_time_jax = final_times[0]
             for system, state in zip(systems, final_states, strict=True):
                 system.jax_set_state(state)
             return float(final_time_jax)
-
-        assert not spans_multiple_devices, (
-            "Multi-device rollout requires block-local execution metadata. "
-            "Cross-block coupled operations are not supported by the jitted "
-            "PositionVerletJAX rollout."
-        )
 
         compiled_rollout = self._get_compiled_rollout(
             system_collection=system_collection,
@@ -240,15 +246,15 @@ class PositionVerletJAX:
                 half_dt_jax=half_dt_jax,
             )
 
+        @jax.jit
         def rollout(
             time_arg: jax.Array,
             states: tuple[JAXPyTree, ...],
         ) -> tuple[jax.Array, tuple[JAXPyTree, ...]]:
             return jax.lax.fori_loop(0, n_steps, body_fn, (time_arg, states))
 
-        compiled_rollout = jax.jit(rollout)
-        self._compiled_rollout_cache[cache_key] = compiled_rollout
-        return compiled_rollout
+        self._compiled_rollout_cache[cache_key] = rollout
+        return rollout
 
     def _get_compiled_block_rollout(
         self,
@@ -291,46 +297,15 @@ class PositionVerletJAX:
                 half_dt_jax=half_dt_jax,
             )
 
+        @jax.jit
         def rollout(
             time_arg: jax.Array,
             state: JAXPyTree,
         ) -> tuple[jax.Array, JAXPyTree]:
             return jax.lax.fori_loop(0, n_steps, body_fn, (time_arg, state))
 
-        compiled_rollout = jax.jit(rollout)
-        self._compiled_rollout_cache[cache_key] = compiled_rollout
-        return compiled_rollout
-
-    def _integrate_independent_blocks(
-        self,
-        *,
-        systems: tuple[JAXBlock, ...],
-        states: tuple[JAXPyTree, ...],
-        executions: tuple[JAXBlockExecution, ...],
-        n_steps: int,
-        simulation_time: np.float64,
-        simulation_dt: np.float64,
-    ) -> tuple[jax.Array, tuple[JAXPyTree, ...]]:
-        assert len(executions) == len(systems), (
-            "Independent block execution metadata must match finalized systems."
-        )
-        final_times: list[jax.Array] = []
-        final_states: list[JAXPyTree] = []
-
-        for system, state, execution in zip(systems, states, executions, strict=True):
-            block_time, updated_state = self._run_compiled_block(
-                system=system,
-                state=state,
-                stages=execution.stages,
-                n_steps=n_steps,
-                simulation_time=simulation_time,
-                simulation_dt=simulation_dt,
-            )
-            final_times.append(block_time)
-            final_states.append(updated_state)
-
-        assert final_times, "At least one JAX block is required for integration."
-        return final_times[0], tuple(final_states)
+        self._compiled_rollout_cache[cache_key] = rollout
+        return rollout
 
     def _run_compiled_block(
         self,

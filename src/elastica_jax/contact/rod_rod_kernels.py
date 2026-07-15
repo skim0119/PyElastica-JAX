@@ -33,7 +33,9 @@ def find_min_dist_jax(
     x2e1 = _dot(e1, x2)
     x2e2 = _dot(x2, e2)
 
-    parallel = jnp.abs(1.0 - e1e2**2 / jnp.maximum(e1e1 * e2e2, _NORM_EPS)) < _PARALLEL_EPS
+    parallel = (
+        jnp.abs(1.0 - e1e2**2 / jnp.maximum(e1e1 * e2e2, _NORM_EPS)) < _PARALLEL_EPS
+    )
 
     def parallel_branch(_: None) -> tuple[jax.Array, jax.Array]:
         t_val = (x2e1 - x1e1) / jnp.maximum(e1e1, _NORM_EPS)
@@ -121,12 +123,12 @@ def rods_aabb_disjoint(
 
 
 def _scatter_pair_force(
-  external_forces: jax.Array,
-  node_index: int,
-  n_elements: int,
-  net_contact_force: jax.Array,
-  *,
-  is_first_rod: bool,
+    external_forces: jax.Array,
+    node_index: int,
+    n_elements: int,
+    net_contact_force: jax.Array,
+    *,
+    is_first_rod: bool,
 ) -> jax.Array:
     sign = 1.0 if is_first_rod else -1.0
     force = sign * net_contact_force
@@ -241,10 +243,14 @@ def _apply_rod_rod_contact_forces_loop(
     edge_one = length_one[None, :] * tangent_one
     edge_two = length_two[None, :] * tangent_two
 
-    def outer_step(i: int, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+    def outer_step(
+        i: int, carry: tuple[jax.Array, jax.Array]
+    ) -> tuple[jax.Array, jax.Array]:
         ext_one, ext_two = carry
 
-        def inner_step(j: int, inner_carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+        def inner_step(
+            j: int, inner_carry: tuple[jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array]:
             inner_ext_one, inner_ext_two = inner_carry
             radii_sum = radius_one[i] + radius_two[j]
             length_sum = length_one[i] + length_two[j]
@@ -287,7 +293,9 @@ def _apply_rod_rod_contact_forces_loop(
                         + internal_forces_two[:, j]
                         + internal_forces_two[:, j + 1]
                     )
-                    equilibrium_forces = -rod_one_elemental_forces + rod_two_elemental_forces
+                    equilibrium_forces = (
+                        -rod_one_elemental_forces + rod_two_elemental_forces
+                    )
                     normal_force = _dot(equilibrium_forces, unit_distance)
                     normal_force = jnp.abs(jnp.minimum(normal_force, 0.0))
                     mask = jnp.where(gamma > 0.0, 1.0, 0.0)
@@ -300,7 +308,8 @@ def _apply_rod_rod_contact_forces_loop(
                         interpenetration_velocity, unit_distance
                     )
                     net_contact_force = (
-                        normal_force + 0.5 * mask * (contact_damping_force + contact_force)
+                        normal_force
+                        + 0.5 * mask * (contact_damping_force + contact_force)
                     ) * unit_distance
                     updated_one = _scatter_pair_force(
                         cur_one,
