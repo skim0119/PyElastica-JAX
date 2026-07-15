@@ -1,7 +1,7 @@
 """Simulator assembly for the JAX active-matter snake-pit case.
 
-Builds a sharded Cosserat-rod block of randomly packed active snakes enclosed by
-a floor and four side walls. Rods are driven by a traveling-wave internal torque
+Builds a Cosserat-rod block of randomly packed active snakes enclosed by a
+floor and four side walls. Rods are driven by a traveling-wave internal torque
 (:class:`~operators.ActiveMatterForcingJax`), interact through capsule-capsule
 rod-rod contact and capsule-half-space wall contact, and are dissipated by an
 analytical linear damper. See ``CASE_DESCRIPTION.md`` for the reference physics.
@@ -9,8 +9,6 @@ analytical linear damper. See ``CASE_DESCRIPTION.md`` for the reference physics.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -33,27 +31,19 @@ class SnakePitSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 def build_simulation(
     parameters: SnakePitParameters,
     *,
-    devices: Sequence[jax.Device],
+    device: jax.Device,
     seed: int,
-    block_checkpoint: Path,
 ) -> tuple[SnakePitSimulator, eaj._CosseratRodMemoryBlock]:
-    """Build and finalize the snake-pit simulator on the given devices.
-
-    A sharded rod block is used when two or more devices are available;
-    otherwise a single-device memory block is built (block checkpointing is a
-    sharded-only feature and is skipped in that case).
+    """Build and finalize the snake-pit simulator on the given device.
 
     Parameters
     ----------
     parameters : SnakePitParameters
         Physical and numerical configuration for the case.
-    devices : Sequence[jax.Device]
-        Execution mesh devices; length one selects the single-device block.
+    device : jax.Device
+        Device that owns the packed JAX rod block.
     seed : int
         Random seed for rod placement inside the packing cylinder.
-    block_checkpoint : pathlib.Path
-        HDF5 block-state path for the sharded block: load when present,
-        otherwise pack and save.
 
     Returns
     -------
@@ -63,13 +53,7 @@ def build_simulation(
     wall_origins, wall_normals = parameters.pit_walls()
 
     simulator = SnakePitSimulator()
-    if len(devices) >= 2:
-        rod_block_cls = eaj.configure_rod_block_sharded(
-            devices=devices,
-            block_checkpoint=block_checkpoint,
-        )
-    else:
-        rod_block_cls = eaj.configure_rod_block(device=devices[0])
+    rod_block_cls = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 
     for start, direction in instantiate_rods_in_cylinder(parameters, seed):
@@ -130,7 +114,7 @@ def build_simulation(
     eaj.install_capsule_contact_state(
         rod_block_cls,
         metadata,
-        device=devices[0],
+        device=device,
         dtype=rod_block_cls.device_dtype,
     )
     return simulator, rod_block_cls

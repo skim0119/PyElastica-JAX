@@ -21,7 +21,7 @@ import elastica_jax as eaj  # Probably safe to load after jax config update.
 
 JAX-owned pieces live in `elastica_jax`, including:
 
-- `configure_rod_block` / `configure_rod_block_sharded` — block factories for `enable_block_supports`
+- `configure_rod_block` — block factory for `enable_block_supports`
 - `PositionVerletJAX` — JIT-compiled Position Verlet integrator
 - `JAXOps` / `JAXOpsBlock` — operator registration mixins
 - `NoOpsJax` / `NoBlockOpJax` — operator base templates
@@ -49,9 +49,8 @@ PyElastica hides block construction behind `finalize()`. PyElastica-JAX keeps th
 entry point, but also lets you configure the block up front and read the built block
 back without scanning `final_systems()`.
 
-Configure with ``configure_rod_block`` or ``configure_rod_block_sharded``, pass the
-returned block instance to ``enable_block_supports``, and use that same instance after
-``finalize()``:
+Configure with ``configure_rod_block``, pass the returned block instance to
+``enable_block_supports``, and use that same instance after ``finalize()``:
 
 ```python
 class JAXSimulator(ea.BaseSystemCollection):
@@ -69,19 +68,6 @@ simulator.finalize()
 # rod_block is now the built block
 assert rod_block.n_rods == n_rods
 ```
-
-For sharded or checkpointed runs:
-
-```python
-execution_mesh = eaj.ExecutionMesh.from_devices(devices, n_rods=n_rods)
-rod_block = eaj.configure_rod_block_sharded(
-    mesh=execution_mesh,
-    block_checkpoint=checkpoint_path,
-)
-simulator.enable_block_supports(ea.CosseratRod, rod_block)
-simulator.finalize()
-```
-
 
 Once the block is built, it owns contiguous device memory for rod state. Original rod
 values are no longer synchronized with that memory automatically.
@@ -141,7 +127,7 @@ implementations at runtime.
 
 After `finalize()`, simulation state lives in the block created by the simulator. The
 original rod objects you appended are not automatically kept in sync with device
-state. This supports multi-device and heterogeneous execution without forcing host
+state. This supports heterogeneous execution without forcing host
 readback every step.
 
 Read block data explicitly when needed — for example through block attributes or
@@ -214,21 +200,6 @@ rod and rigid-body views.
 
 ## Advanced Usage
 
-### Sharded Blocks
-
-For multi-device execution, configure the block factory with an execution mesh:
-
-```python
-execution_mesh = eaj.ExecutionMesh.from_devices(devices, n_rods=n_rods)
-rod_block = eaj.configure_rod_block_sharded(
-    mesh=execution_mesh,
-    device_dtype=np.float64,
-    block_checkpoint=checkpoint_path,
-)
-simulator.enable_block_supports(ea.CosseratRod, rod_block)
-simulator.finalize()
-```
-
 On multi-core CPU, you can expose multiple host devices with:
 
 ```python
@@ -237,16 +208,9 @@ import os
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
 ```
 
-### Block Checkpoints
-
-Pass `block_checkpoint=path` to `configure_rod_block_sharded(...)`.
-During `finalize()`, an existing checkpoint skips repacking rod data and loads saved
-state instead; a missing file triggers a save after block construction.
-
 ## Terminology
 
 - `memory_block` — one block collecting many rods in contiguous device memory.
-- `sharded_block` — a logical block split across multiple device-local blocks.
 
 ## Mental Model
 

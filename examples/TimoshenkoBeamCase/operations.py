@@ -25,6 +25,7 @@ class TimoshenkoParameters:
     poisson_ratio: float = 99.0
     end_force_x: float = -15.0
     final_time: float = 10.0
+    _damping_coeff_scale: float = 0.1
 
     @property
     def shear_modulus(self) -> float:
@@ -36,7 +37,7 @@ class TimoshenkoParameters:
 
     @property
     def damping_constant(self) -> float:
-        return 0.1 / 7.0 / self.density / self.base_area
+        return self._damping_coeff_scale / 7.0 / self.density / self.base_area
 
     @property
     def time_step(self) -> float:

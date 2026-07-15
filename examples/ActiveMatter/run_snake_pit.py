@@ -106,28 +106,20 @@ def run_simulation(
     parameters: SnakePitParameters,
     *,
     backend: str,
-    mesh: str,
     seed: int,
     run_name: str | None,
     fps: float,
     save_workers: int,
-    block_checkpoint: Path,
 ) -> Path:
     """Build the simulator, roll it out, and stream HDF5 frames to ``data/``."""
     output_dir = _EXAMPLE_DIR / ("data" if run_name is None else f"data_{run_name}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    devices = eaj.execution_mesh_for_block_checkpoint(
-        block_checkpoint,
-        mesh_name=mesh,
-        backend=backend,
-        n_rods=parameters.n_snakes,
-    )
+    device = eaj.resolve_backend_devices(backend)[0]
     simulator, block = build_simulation(
         parameters,
-        devices=devices,
+        device=device,
         seed=seed,
-        block_checkpoint=block_checkpoint,
     )
     wall_origins, wall_normals = parameters.pit_walls()
 
@@ -186,10 +178,7 @@ def run_simulation(
     )
     print(f"saved_frames={output_dir}")
     print(f"elapsed={elapsed:.6f}s finite={np.isfinite(positions).all()}")
-    print(
-        f"backend={backend} mesh={mesh} shards={getattr(block, 'n_shards', 1)} "
-        f"dtype={block.device_dtype}"
-    )
+    print(f"backend={backend} dtype={block.device_dtype}")
     return output_dir
 
 
@@ -201,16 +190,6 @@ def run_simulation(
     "--smoke", is_flag=True, help="Downscaled fast run exercising all features."
 )
 @click.option("--render", is_flag=True, help="Render frames and mp4 after the run.")
-@click.option(
-    "--mesh",
-    type=click.Choice(("unified", "auto"), case_sensitive=False),
-    default="auto",
-    show_default=True,
-    help=(
-        "Execution mesh: unified keeps one shard; auto uses one shard per "
-        "local device when multiple are available."
-    ),
-)
 @click.option("--seed", default=2026, show_default=True)
 @click.option(
     "--run-name",
@@ -226,27 +205,16 @@ def run_simulation(
     show_default=True,
     help="Worker processes for parallel HDF5 rod-chunk writes.",
 )
-@click.option(
-    "--block-checkpoint",
-    type=click.Path(path_type=Path, dir_okay=False),
-    default=None,
-    help=(
-        "HDF5 block state path: load when the file exists, otherwise pack rods "
-        "and save after construction. Defaults to <data-dir>/block_checkpoint.h5."
-    ),
-)
 def main(
     n_snakes: int,
     final_time: float,
     gpu: bool,
     smoke: bool,
     render: bool,
-    mesh: str,
     seed: int,
     run_name: str | None,
     fps: float,
     save_workers: int,
-    block_checkpoint: Path | None,
 ) -> None:
     """Build, integrate, and stream the JAX snake-pit case to ``data/``."""
     parameters = (
@@ -255,20 +223,14 @@ def main(
         else SnakePitParameters(n_snakes=n_snakes, final_time=final_time)
     )
     backend = "cuda" if gpu else "cpu"
-    if block_checkpoint is None:
-        data_root = _EXAMPLE_DIR / ("data" if run_name is None else f"data_{run_name}")
-        block_checkpoint = data_root / "block_checkpoint.h5"
-    block_checkpoint.parent.mkdir(parents=True, exist_ok=True)
 
     run_simulation(
         parameters,
         backend=backend,
-        mesh=mesh,
         seed=seed,
         run_name=run_name,
         fps=fps,
         save_workers=save_workers,
-        block_checkpoint=block_checkpoint,
     )
 
     if render:

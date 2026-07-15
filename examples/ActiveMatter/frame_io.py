@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def extract_stacked_positions(
-    block: eaj._CosseratRodMemoryBlock | eaj._ShardedCosseratRodBlock,
+    block: eaj._CosseratRodMemoryBlock,
     *,
     n_snakes: int,
 ) -> np.ndarray:

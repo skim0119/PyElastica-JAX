@@ -7,7 +7,6 @@ import click
 from _jax_snake_common import (
     run_jax_rollout,
     run_jax_rollout_gpu2x,
-    run_jax_rollout_gpu2x_sharded,
     run_pyelastica_rollout,
 )
 
@@ -24,7 +23,7 @@ def run(
     Parameters
     ----------
     backend : str
-        "pyelastica", "cpu", "cuda", "gpu2x", or "gpu2x_sharded"
+        "pyelastica", "cpu", "cuda", or "gpu2x"
     n_snakes_exp : int
         Exponent of number of snakes (n_snakes = 2 ** n_snakes_exp)
     steps : int
@@ -59,12 +58,6 @@ def run(
                 steps=steps,
                 warmup_runs=warmup_runs,
             )
-        case "gpu2x_sharded":
-            _, rollout_walltime = run_jax_rollout_gpu2x_sharded(
-                n_snakes=n_snakes,
-                steps=steps,
-                warmup_runs=warmup_runs,
-            )
         case _:
             raise AssertionError(f"Unsupported backend {backend!r}.")
     return rollout_walltime
@@ -74,7 +67,7 @@ def run(
 @click.option(
     "--backend",
     type=click.Choice(
-        ("pyelastica", "cpu", "cuda", "gpu2x", "gpu2x_sharded"),
+        ("pyelastica", "cpu", "cuda", "gpu2x"),
         case_sensitive=False,
     ),
     default="cpu",

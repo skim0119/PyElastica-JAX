@@ -223,26 +223,19 @@ def build_cpu_sim(
 
 def build_jax_sim(
     *,
-    device: jax.Device | Sequence[jax.Device],
+    device: jax.Device,
     device_dtype: np.dtype,
     n_snakes: int,
-    sharded: bool = False,
     inner_block_cls: type | None = None,
 ) -> tuple[JAXSimulator, JAXRodBlock]:
     rod_block: JAXRodBlock
-    if sharded:
-        raise NotImplementedError
-    else:
-        assert isinstance(device, jax.Device), (
-            "A non-sharded JAX block requires exactly one device."
-        )
-        configure_kwargs: dict[str, Any] = {
-            "device": device,
-            "device_dtype": np.dtype(device_dtype),
-        }
-        if inner_block_cls is not None:
-            configure_kwargs["inner_block_cls"] = inner_block_cls
-        rod_block = eaj.configure_rod_block(**configure_kwargs)
+    configure_kwargs: dict[str, Any] = {
+        "device": device,
+        "device_dtype": np.dtype(device_dtype),
+    }
+    if inner_block_cls is not None:
+        configure_kwargs["inner_block_cls"] = inner_block_cls
+    rod_block = eaj.configure_rod_block(**configure_kwargs)
 
     sim = JAXSimulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
@@ -477,39 +470,6 @@ def run_jax_rollout(
         )
 
     return instantiate_seconds, rollout_seconds
-
-
-def run_jax_rollout_gpu2x_sharded(
-    *,
-    n_snakes: int,
-    steps: int,
-    warmup_runs: int,
-) -> BenchmarkTiming:
-    raise NotImplementedError
-
-    """Build a 2-GPU sharded JAX block simulator and time a Position Verlet rollout."""
-    assert n_snakes % 2 == 0, "gpu2x_sharded requires a snake count divisible by two."
-    dtype = np.dtype(np.float64)
-    devices = two_gpu_sharded_devices()
-
-    instantiate_start = time.perf_counter()
-    jax_sim, jax_block = build_jax_sim(
-        device=devices,
-        device_dtype=dtype,
-        n_snakes=n_snakes,
-        sharded=True,
-    )
-    _block_until_ready((jax_block,))
-    instantiate_seconds = time.perf_counter() - instantiate_start
-    rollout_seconds = integrate_jax_block_rollout(
-        jax_sim,
-        (jax_block,),
-        steps=steps,
-        warmup_runs=warmup_runs,
-    )
-
-    return instantiate_seconds, rollout_seconds
-
 
 def run_jax_rollout_gpu2x(
     *,
