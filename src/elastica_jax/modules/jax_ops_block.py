@@ -19,7 +19,6 @@ from elastica_jax.memory_block.mpi_cosserat_rod_jax import (
     _MpiCosseratRodBlock,
 )
 from elastica_jax.memory_block.protocol import RodBlockProtocol
-from elastica_jax.protocol import JAXBlockExecution, JAXBlockStages
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -545,55 +544,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
         self._jax_block_ops_list = []
         del self._jax_block_ops_list
-
-    def jax_independent_block_executions(
-        self,
-    ) -> tuple[JAXBlockExecution, ...] | None:
-        """
-        Return block-local execution stages when no cross-block operators exist.
-
-        Returns
-        -------
-        tuple[JAXBlockExecution, ...] | None
-            One execution description per finalized block. ``None`` indicates that
-            at least one registered stage operator couples block states.
-        """
-        stage_groups = {
-            "constrain_values": self._feature_group_constrain_values,
-            "synchronize": self._feature_group_synchronize,
-            "constrain_rates": self._feature_group_constrain_rates,
-        }
-        registered_counts = {
-            stage: sum(
-                len(stage_map[stage])
-                for stage_map in self._jax_local_block_stages.values()
-            )
-            for stage in stage_groups
-        }
-        actual_counts = {
-            stage: sum(1 for _ in group) for stage, group in stage_groups.items()
-        }
-        actual_counts["constrain_rates"] += sum(1 for _ in self._feature_group_damping)
-        if registered_counts != actual_counts:
-            return None
-
-        executions = []
-        for block_state_idx, system in enumerate(self.final_systems()):
-            stage_map = self._jax_local_block_stages.get(
-                block_state_idx,
-                {stage: [] for stage in stage_groups},
-            )
-            stages = self._make_block_stages(stage_map)
-            executions.append(JAXBlockExecution(stages=stages))
-        return tuple(executions)
-
-    @staticmethod
-    def _make_block_stages(stage_map: dict[str, list[Any]]) -> JAXBlockStages:
-        return JAXBlockStages(
-            constrain_values=tuple(stage_map["constrain_values"]),
-            synchronize=tuple(stage_map["synchronize"]),
-            constrain_rates=tuple(stage_map["constrain_rates"]),
-        )
 
     def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
         assert stage in (
