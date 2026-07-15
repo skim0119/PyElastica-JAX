@@ -45,6 +45,7 @@ def configure_rod_block(
     device: str | jax.Device = DEFAULT_ROD_BLOCK_BACKEND,
     device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
     inner_block_cls: Type[RodBlockProtocol] = _CosseratRodMemoryBlock,
+    block_checkpoint: Path | str | None = None,
 ) -> RodBlockProtocol:
     """
     Return a configured Cosserat rod block for ``enable_block_supports``.
@@ -54,10 +55,18 @@ def configure_rod_block(
     """
     if isinstance(device, str):
         device = resolve_backend_devices(device)[0]  # TODO: handle multiple devices
+    configure_kwargs: dict[str, Any] = {
+        "device": device,
+        "device_dtype": _normalize_device_dtype(device_dtype),
+    }
+    if block_checkpoint is not None:
+        assert inner_block_cls is _CosseratRodMemoryBlock, (
+            "block_checkpoint is currently supported only for the default "
+            "_CosseratRodMemoryBlock."
+        )
+        configure_kwargs["block_checkpoint"] = block_checkpoint
     return inner_block_cls(
-        device=device,
-        device_dtype=_normalize_device_dtype(device_dtype),
-        block_checkpoint=block_checkpoint,
+        **configure_kwargs,
     )  # type: ignore[call-arg]
 
 
