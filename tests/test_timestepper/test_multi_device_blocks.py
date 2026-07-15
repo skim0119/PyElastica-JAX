@@ -94,33 +94,3 @@ def test_position_verlet_integrates_two_blocks_on_separate_devices():
             final_time=0.003,
             dt=0.001,
         )
-
-
-def test_position_verlet_compiles_each_sharded_block_partition():
-    devices = tuple(jax.devices("cpu")[:2])
-    if len(devices) < 2:
-        pytest.skip("requires at least two CPU devices")
-
-    simulator = _MultiBlockSimulator()
-    rod_block = eaj.configure_rod_block_sharded(
-        devices=devices,
-        device_dtype=np.float64,
-    )
-    simulator.enable_block_supports(ea.CosseratRod, rod_block)
-    simulator.append(_build_rod(ea.CosseratRod))
-    simulator.append(_build_rod(ea.CosseratRod))
-    simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
-    simulator.finalize()
-
-    stepper = eaj.PositionVerletJAX()
-    final_time = stepper.integrate(
-        simulator,
-        time=0.0,
-        final_time=0.002,
-        dt=0.001,
-    )
-
-    assert final_time == pytest.approx(0.002)
-    assert sum(key[0] == "block" for key in stepper._compiled_rollout_cache) == 2
-    for shard_state in rod_block.jax_get_state()["shards"]:
-        jax.block_until_ready(shard_state["position_collection"])

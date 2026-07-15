@@ -423,7 +423,6 @@ stacked layout in user operators. The backend applies ``vmap`` for you.
 
 > Work-in-progress
 > Not exactly decided to keep both mpi and jax.distributed support. Maybe they are complementary?
-> Keep explicit control on shard block? or Internally handle?
 
 Use separate blocks when each rod group is independent. Each block is assigned to
 one device and compiled as its own JIT `fori_loop` rollout:

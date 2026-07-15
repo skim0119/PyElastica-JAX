@@ -20,10 +20,9 @@ class JAXBlockStages:
 
 @dataclass(frozen=True)
 class JAXBlockExecution:
-    """Local stage transforms for a block and its optional device shards."""
+    """Local stage transforms for one independently executable block."""
 
     stages: JAXBlockStages
-    shard_stages: tuple[JAXBlockStages, ...] | None = None
 
 
 class JAXBlock(Protocol):

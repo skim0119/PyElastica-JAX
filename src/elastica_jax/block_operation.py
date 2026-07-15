@@ -10,7 +10,7 @@ JAXBlockState: TypeAlias = dict[str, Any]
 
 
 class CommunicationScope(Enum):
-    """How far a block operator must reach across shards during synchronize."""
+    """How far a block operator must reach during synchronize."""
 
     LOCAL = "local"
     HALO_READ = "halo_read"

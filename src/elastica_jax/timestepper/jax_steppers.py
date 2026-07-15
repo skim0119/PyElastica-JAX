@@ -6,11 +6,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-from ..memory_block.sharded_cosserat_rod_jax import (
-    SHARDED_STATE_KEY,
-    _ShardedCosseratRodBlock,
-)
 from ..protocol import (
     JAXBlock,
     JAXBlockExecution,
@@ -201,15 +196,6 @@ class PositionVerletJAX:
     @staticmethod
     def _devices_in_state(state: JAXPyTree) -> set[Any]:
         devices: set[Any] = set()
-        if isinstance(state, dict) and state.get(SHARDED_STATE_KEY, False):
-            for shard_state in state["shards"]:
-                for leaf in jax.tree_util.tree_leaves(shard_state):
-                    if hasattr(leaf, "devices"):
-                        devices.update(leaf.devices())
-                    elif hasattr(leaf, "device"):
-                        devices.add(leaf.device)
-            return devices
-
         for leaf in jax.tree_util.tree_leaves(state):
             if hasattr(leaf, "devices"):
                 devices.update(leaf.devices())
@@ -332,36 +318,6 @@ class PositionVerletJAX:
         final_states: list[JAXPyTree] = []
 
         for system, state, execution in zip(systems, states, executions, strict=True):
-            if execution.shard_stages is not None:
-                assert isinstance(system, _ShardedCosseratRodBlock), (
-                    "Shard execution stages require a sharded block."
-                )
-                shard_states = state["shards"]
-                assert len(execution.shard_stages) == len(shard_states), (
-                    "Shard execution metadata must match block state shards."
-                )
-                updated_shards = []
-                for shard_system, shard_state, shard_stages in zip(
-                    system._shard_blocks,
-                    shard_states,
-                    execution.shard_stages,
-                    strict=True,
-                ):
-                    shard_time, updated_shard = self._run_compiled_block(
-                        system=shard_system,
-                        state=shard_state,
-                        stages=shard_stages,
-                        n_steps=n_steps,
-                        simulation_time=simulation_time,
-                        simulation_dt=simulation_dt,
-                    )
-                    final_times.append(shard_time)
-                    updated_shards.append(updated_shard)
-                final_states.append(
-                    {SHARDED_STATE_KEY: True, "shards": tuple(updated_shards)}
-                )
-                continue
-
             block_time, updated_state = self._run_compiled_block(
                 system=system,
                 state=state,
@@ -407,17 +363,6 @@ class PositionVerletJAX:
         states: tuple[JAXPyTree, ...],
     ) -> Any:
         first_system = systems[0]
-        first_state = states[0]
-        if isinstance(first_state, dict) and first_state.get(SHARDED_STATE_KEY, False):
-            for leaf in jax.tree_util.tree_leaves(first_state["shards"][0]):
-                if hasattr(leaf, "devices"):
-                    return next(iter(leaf.devices()))
-                if hasattr(leaf, "device"):
-                    return leaf.device
-
-        if isinstance(first_system, _ShardedCosseratRodBlock):
-            return first_system._devices[0]
-
         if hasattr(first_system, "position_collection_device"):
             return first_system.position_collection_device.device
 
@@ -433,11 +378,6 @@ class PositionVerletJAX:
     def _reference_dtype_from_states(
         states: tuple[JAXPyTree, ...],
     ) -> np.dtype:
-        first_state = states[0]
-        if isinstance(first_state, dict) and first_state.get(SHARDED_STATE_KEY, False):
-            for leaf in jax.tree_util.tree_leaves(first_state["shards"][0]):
-                if hasattr(leaf, "dtype"):
-                    return np.dtype(leaf.dtype)
         for leaf in jax.tree_util.tree_leaves(states):
             if hasattr(leaf, "dtype"):
                 return np.dtype(leaf.dtype)
