@@ -81,7 +81,7 @@ def extract_centerline(
     block: eaj._CosseratRodMemoryBlock,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return axial coordinate and x-displacement along the rod centerline."""
-    positions = np.asarray(block.position_collection_device)
+    positions = np.asarray(block.device_state["position_collection"])
     x = positions[0]
     rest_length = np.sum(np.linalg.norm(np.diff(positions, axis=1), axis=0))
     s = np.linspace(0.0, rest_length, positions.shape[1])

@@ -336,8 +336,8 @@ def main() -> None:
         final_time=np.float64(snapped_final_time),
         dt=np.float64(args.dt),
     )
-    jax.block_until_ready(rod_block.position_collection_device)
-    jax.block_until_ready(rigid_body_block.position_collection_device)
+    jax.block_until_ready(rod_block.device_state["position_collection"])
+    jax.block_until_ready(rigid_body_block.device_state["position_collection"])
 
     start = time.perf_counter()
     stepper.integrate(
@@ -346,8 +346,8 @@ def main() -> None:
         final_time=np.float64(snapped_final_time),
         dt=np.float64(args.dt),
     )
-    jax.block_until_ready(rod_block.position_collection_device)
-    jax.block_until_ready(rigid_body_block.position_collection_device)
+    jax.block_until_ready(rod_block.device_state["position_collection"])
+    jax.block_until_ready(rigid_body_block.device_state["position_collection"])
     elapsed = time.perf_counter() - start
 
     rod_block.from_device(update_rods=True)

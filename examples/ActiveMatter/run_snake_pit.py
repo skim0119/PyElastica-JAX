@@ -169,7 +169,7 @@ def run_simulation(
         current_time = chunk_final_time
 
     elapsed = time.perf_counter() - start
-    positions = np.asarray(block.position_collection_device)
+    positions = np.asarray(block.device_state["position_collection"])
     print(
         f"case=snake-pit steps={int(round(parameters.final_time / parameters.time_step))}"
     )

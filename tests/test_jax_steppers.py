@@ -10,6 +10,9 @@ class FakeJAXBlock:
     def __init__(self):
         self.final_state = None
 
+    def device_put(self, value):
+        return jnp.asarray(value, dtype=jnp.float32)
+
     def jax_get_state(self):
         return {
             "position": jnp.asarray(0.0),

@@ -917,7 +917,6 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._update_device_metadata(device=target_device)
         if target_device is not None:
             self._device_platform = target_device.platform
-        self._refresh_device_views()
         self._device_dirty = False
 
     def to_device(
@@ -948,7 +947,6 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
                 host_array,
                 device=self._initial_device,
             )
-        self._refresh_device_views()
         self._device_dirty = False
 
     def from_device(
@@ -1016,15 +1014,35 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             )
         raise KeyError(f"Unsupported sync attribute {attr!r}")
 
-    def _refresh_device_views(self) -> None:
-        self.position_collection_device = self._device_state["position_collection"]
-        self.director_collection_device = self._device_state["director_collection"]
-        self.velocity_collection_device = self._device_state["velocity_collection"]
-        self.omega_collection_device = self._device_state["omega_collection"]
-        self.acceleration_collection_device = self._device_state[
-            "acceleration_collection"
-        ]
-        self.alpha_collection_device = self._device_state["alpha_collection"]
+    @property
+    def devices(self) -> tuple[jax.Device, ...]:
+        """Return every device that owns part of this block's state."""
+        state_values = tuple(self._device_state.values())
+        assert state_values, (
+            "Device state must be initialized before accessing devices."
+        )
+        sample = state_values[0]
+        if hasattr(sample, "devices"):
+            return tuple(sample.devices())
+        assert hasattr(sample, "device"), (
+            "Device state leaves must expose either `devices()` or `device`."
+        )
+        return (sample.device,)
+
+    @property
+    def device(self) -> jax.Device:
+        """Return the unique execution device for single-device blocks."""
+        devices = self.devices
+        assert len(devices) == 1, (
+            "Distributed block state does not have a unique `device`; use `devices` "
+            "or `device_state` instead."
+        )
+        return devices[0]
+
+    @property
+    def device_state(self) -> dict[str, jax.Array]:
+        """Return the authoritative device-backed block state."""
+        return self._device_state
 
     def _update_device_metadata(self, *, device: jax.Device | None) -> None:
         def put_index(array: np.ndarray) -> jax.Array:
@@ -1049,8 +1067,17 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def _device_scalar(self, value: float | np.floating) -> jax.Array:
         return jax.device_put(
             self._device_dtype.type(value),
-            device=self.position_collection_device.device,
+            device=self.device,
         )
+
+    def device_put(self, value: object) -> jax.Array:
+        """Place supported values on this block's execution device."""
+        if isinstance(value, (float, np.floating)):
+            return self._device_scalar(value)
+        dtype = getattr(value, "dtype", None)
+        if dtype is not None and np.issubdtype(np.dtype(dtype), np.floating):
+            value = jnp.asarray(value, dtype=self._device_dtype)
+        return jax.device_put(value, device=self.device)
 
     def jax_get_state(self) -> dict[str, jax.Array]:
         return dict(self._device_state)
@@ -1099,7 +1126,6 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
 
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)
-        self._refresh_device_views()
         self._device_dirty = True
 
     def tree_flatten(
@@ -1133,7 +1159,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["director_collection"],
             state["velocity_collection"],
             state["omega_collection"],
-            self._device_dtype.type(prefac),
+            jnp.asarray(prefac, dtype=self._device_dtype),
         )
         updated = dict(state)
         updated["position_collection"] = position_collection
@@ -1223,7 +1249,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["omega_collection"],
             acceleration_collection,
             alpha_collection,
-            self._device_dtype.type(dt),
+            jnp.asarray(dt, dtype=self._device_dtype),
         )
         updated = dict(state)
         updated["acceleration_collection"] = acceleration_collection

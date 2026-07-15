@@ -212,7 +212,7 @@ class MemoryBlockMuscleArmJax(_CosseratRodMemoryBlock):
                 config.force_length_coefficient
             )
 
-        device = self.position_collection_device.device
+        device = self.device
         dtype = self._device_dtype
         self._muscle_metadata = {
             "ratio_muscle_position": jax.device_put(

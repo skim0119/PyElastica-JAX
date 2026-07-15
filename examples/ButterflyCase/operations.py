@@ -110,7 +110,7 @@ def build_simulator(
 
 def extract_positions(block: eaj._CosseratRodMemoryBlock) -> np.ndarray:
     """Return node positions as ``(3, n_nodes)`` on the host."""
-    return np.asarray(block.position_collection_device).copy()
+    return np.asarray(block.device_state["position_collection"]).copy()
 
 
 def total_energy(rod: ea.CosseratRod) -> float:

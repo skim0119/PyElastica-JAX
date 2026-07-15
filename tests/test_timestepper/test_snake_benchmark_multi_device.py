@@ -42,8 +42,9 @@ def test_gpu2x_builder_creates_two_explicit_blocks() -> None:
     final_systems = tuple(simulator.final_systems())
 
     assert final_systems == rod_blocks
-    assert tuple(block.position_collection_device.device for block in rod_blocks) == (
-        devices
+    assert tuple(block.devices for block in rod_blocks) == (
+        (devices[0],),
+        (devices[1],),
     )
     snake_common.integrate_jax_block_rollout(
         simulator,
