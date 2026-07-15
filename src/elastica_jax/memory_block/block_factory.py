@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Sequence, Type
+from typing import Any, Type
 
 import jax
 import numpy as np
 
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
-from elastica_jax.memory_block.sharded_cosserat_rod_jax import _ShardedCosseratRodBlock
 from elastica_jax.memory_block.protocol import RodBlockProtocol
 
 DEFAULT_ROD_BLOCK_BACKEND = "cpu"
@@ -58,35 +57,8 @@ def configure_rod_block(
     return inner_block_cls(
         device=device,
         device_dtype=_normalize_device_dtype(device_dtype),
-    )  # type: ignore[call-arg]
-
-
-def configure_rod_block_sharded(
-    *,
-    devices: Sequence[jax.Device] | None = None,
-    device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
-    inner_block_cls: Type[RodBlockProtocol] = _CosseratRodMemoryBlock,
-    block_checkpoint: Path | str | None = None,
-) -> RodBlockProtocol:
-    """
-    Return a configured sharded Cosserat rod block for ``enable_block_supports``.
-
-    Rods are split evenly across ``devices`` when the block is finalized.
-
-    PyElastica builds the block by calling the returned instance as
-    ``block(systems, system_idx_list)`` during ``finalize()``.
-    """
-    device_tuple = tuple(devices if devices is not None else jax.devices())
-    assert len(device_tuple) >= 2, (
-        "Sharded rod blocks require at least two devices. "
-        "Use configure_rod_block(...) for a single-device memory block."
-    )
-    return _ShardedCosseratRodBlock(
-        devices=device_tuple,
-        device_dtype=_normalize_device_dtype(device_dtype),
         block_checkpoint=block_checkpoint,
-        inner_block_cls=inner_block_cls,  # type: ignore[arg-type]
-    )  # type: ignore[return-value]
+    )  # type: ignore[call-arg]
 
 
 def configure_rod_block_mpi(

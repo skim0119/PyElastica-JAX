@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
-import jax
 import pytest
 
-os.environ.setdefault("XLA_FLAGS", "--xla_force_host_platform_device_count=2")
-
+jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
 import elastica as ea  # noqa: E402
@@ -18,13 +14,6 @@ import elastica_jax as eaj  # noqa: E402
 
 class _CheckpointSimulator(ea.BaseSystemCollection):
     pass
-
-
-def _sharded_devices() -> tuple[jax.Device, ...]:
-    devices = tuple(jax.devices("cpu")[:2])
-    if len(devices) < 2:
-        pytest.skip("requires at least two CPU devices")
-    return devices
 
 
 def _append_layout_rods(
@@ -49,30 +38,26 @@ def _build_block(
     *,
     n_rods: int,
     n_elements: int,
-    devices: Sequence[jax.Device],
     block_checkpoint: Path | None = None,
-) -> eaj._ShardedCosseratRodBlock:
+) -> eaj._CosseratRodMemoryBlock:
     simulator = _CheckpointSimulator()
-    rod_block_cls = eaj.configure_rod_block_sharded(
-        devices=devices,
+    rod_block = eaj.configure_rod_block(
+        device=jax.devices("cpu")[0],
         device_dtype=np.float64,
         block_checkpoint=block_checkpoint,
     )
-    simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
     _append_layout_rods(simulator, n_rods=n_rods, n_elements=n_elements)
     simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    assert isinstance(block, eaj._ShardedCosseratRodBlock)
-    return block
+    assert isinstance(rod_block, eaj._CosseratRodMemoryBlock)
+    return rod_block
 
 
 def test_block_checkpoint_roundtrip(tmp_path: Path) -> None:
-    devices = _sharded_devices()
     checkpoint_path = tmp_path / "block.h5"
     block = _build_block(
         n_rods=2,
         n_elements=4,
-        devices=devices,
         block_checkpoint=checkpoint_path,
     )
     reference = block.jax_get_state()
@@ -80,29 +65,24 @@ def test_block_checkpoint_roundtrip(tmp_path: Path) -> None:
     reloaded = _build_block(
         n_rods=2,
         n_elements=4,
-        devices=devices,
         block_checkpoint=checkpoint_path,
     )
     loaded = reloaded.jax_get_state()
-    for shard_index, shard_state in enumerate(reference["shards"]):
-        reloaded_shard = loaded["shards"][shard_index]
-        for key in shard_state:
-            assert np.allclose(
-                np.asarray(shard_state[key]),
-                np.asarray(reloaded_shard[key]),
-            )
+    for key in reference:
+        assert np.allclose(
+            np.asarray(reference[key]),
+            np.asarray(loaded[key]),
+        )
 
 
 def test_finalize_skips_rod_packing_when_checkpoint_is_loaded(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    devices = _sharded_devices()
     checkpoint_path = tmp_path / "block.h5"
     _build_block(
         n_rods=2,
         n_elements=4,
-        devices=devices,
         block_checkpoint=checkpoint_path,
     )
 
@@ -123,27 +103,20 @@ def test_finalize_skips_rod_packing_when_checkpoint_is_loaded(
     _build_block(
         n_rods=2,
         n_elements=4,
-        devices=devices,
         block_checkpoint=checkpoint_path,
     )
     assert calls["count"] == 0
 
 
-def test_execution_mesh_for_block_checkpoint_reads_layout(tmp_path: Path) -> None:
-    devices = _sharded_devices()
+def test_read_block_checkpoint_layout_reads_saved_metadata(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "block.h5"
     _build_block(
-        n_rods=2,
-        n_elements=4,
-        devices=devices,
+        n_rods=3,
+        n_elements=5,
         block_checkpoint=checkpoint_path,
     )
+
     layout = eaj.read_block_checkpoint_layout(checkpoint_path)
-    resolved = eaj.execution_mesh_for_block_checkpoint(
-        checkpoint_path,
-        mesh_name="auto",
-        backend="cpu",
-        n_rods=99,
-    )
-    assert len(resolved) == layout.n_shards == 2
-    assert layout.rod_to_shard is not None
+    assert layout.n_rods == 3
+    assert layout.n_elements_per_rod == 5
+    assert layout.dtype == "float64"

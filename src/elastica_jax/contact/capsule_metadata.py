@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,14 +15,6 @@ from elastica_jax.contact.spatial_hash import (
     estimate_max_pairs,
 )
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
-from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-    SHARDED_STATE_KEY,
-)
-
-if TYPE_CHECKING:
-    from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-        _ShardedCosseratRodBlock,
-    )
 
 CONTACT_STATE_PAIR_FIRST = "capsule_contact_pair_first"
 CONTACT_STATE_PAIR_SECOND = "capsule_contact_pair_second"
@@ -60,7 +52,7 @@ class BlockCapsuleMetadata:
 
 
 def build_block_capsule_metadata(
-    block: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
+    block: _CosseratRodMemoryBlock,
     *,
     n_elements_per_rod: int,
     cell_size: float | None = None,
@@ -142,7 +134,7 @@ def initialize_capsule_contact_state(
 
 
 def install_capsule_contact_state(
-    block: _CosseratRodMemoryBlock | _ShardedCosseratRodBlock,
+    block: _CosseratRodMemoryBlock,
     metadata: BlockCapsuleMetadata,
     *,
     device: jax.Device | None,
@@ -152,11 +144,6 @@ def install_capsule_contact_state(
         metadata, device=device, dtype=dtype
     )
     state = block.jax_get_state()
-    if state.get(SHARDED_STATE_KEY, False):
-        shard_states = list(state["shards"])
-        shard_states[0] = {**shard_states[0], **contact_state}
-        block.jax_set_state({SHARDED_STATE_KEY: True, "shards": tuple(shard_states)})
-        return
     block.jax_set_state({**state, **contact_state})
 
 

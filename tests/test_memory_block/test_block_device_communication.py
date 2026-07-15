@@ -1,4 +1,4 @@
-"""Tests for non-sharded rod block host/device communication."""
+"""Tests for rod block host/device communication."""
 
 from __future__ import annotations
 

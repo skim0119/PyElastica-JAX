@@ -51,31 +51,3 @@ def test_gpu2x_builder_creates_two_explicit_blocks() -> None:
         steps=1,
         warmup_runs=1,
     )
-
-
-def test_gpu2x_sharded_builder_creates_one_block_with_two_shards() -> None:
-    devices = _two_cpu_devices()
-
-    simulator, rod_block = snake_common.build_jax_sim(
-        device=devices,
-        device_dtype=np.dtype(np.float64),
-        n_snakes=2,
-        sharded=True,
-    )
-    shard_states = rod_block.jax_get_state()["shards"]
-
-    assert tuple(simulator.final_systems()) == (rod_block,)
-    assert len(shard_states) == 2
-    assert (
-        tuple(
-            next(iter(jax.tree_util.tree_leaves(state)[0].devices()))
-            for state in shard_states
-        )
-        == devices
-    )
-    snake_common.integrate_jax_block_rollout(
-        simulator,
-        (rod_block,),
-        steps=1,
-        warmup_runs=1,
-    )

@@ -15,7 +15,6 @@ from elastica_jax.memory_block.memory_block_rod_vertical_jax import (
 from elastica_jax.memory_block.block_factory import (
     configure_rod_block,
     configure_rod_block_mpi,
-    configure_rod_block_sharded,
     resolve_backend_devices,
 )
 from elastica_jax.operations import (
@@ -35,17 +34,14 @@ from elastica_jax.contact import (
     build_block_capsule_metadata,
     install_capsule_contact_state,
 )
-from elastica_jax.execution_mesh import ExecutionMesh
-from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-    _ShardedCosseratRodBlock,
-    SHARDED_STATE_KEY,
-)
 from elastica_jax.checkpoint import (
     BlockCheckpointLayout,
-    execution_mesh_for_block_checkpoint,
+    apply_block_checkpoint_to_memory_block,
+    infer_n_elements_per_rod,
     layout_rods_for_block,
     read_block_checkpoint_layout,
     save_block_checkpoint,
+    validate_block_checkpoint,
 )
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 from elastica_jax.rod_rigid_body_operation import NoRodRigidBodyJax

@@ -25,9 +25,6 @@ from elastica_jax.contact.spatial_hash_jax import (
     rebuild_all_pairs_jax,
     rebuild_spatial_hash_pairs_jax,
 )
-from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-    SHARDED_STATE_KEY,
-)
 
 
 def _rebuild_broad_phase_pairs(
@@ -241,19 +238,6 @@ class CapsuleContactOp(NoBlockOpJax):
         self._rod_ids = jnp.asarray(metadata.rod_ids)
 
     def jax_block_operate_synchronize(self, state, time):
-        if state.get(SHARDED_STATE_KEY, False):
-            from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-                _ShardedCosseratRodBlock,
-            )
-
-            assert isinstance(self._block, _ShardedCosseratRodBlock), (
-                "Sharded capsule contact requires a _ShardedCosseratRodBlock system."
-            )
-            merged = self._block.merge_shard_states(state)
-            for key in CONTACT_STATE_KEYS:
-                merged[key] = state["shards"][0][key]
-            merged = _apply_capsule_contact_unified(self, merged, time)
-            return self._block.scatter_merged_state(merged, state)
         return _apply_capsule_contact_unified(self, state, time)
 
 
@@ -320,15 +304,4 @@ class WallContactOp(NoBlockOpJax):
         self.contact_damping = contact_damping
 
     def jax_block_operate_synchronize(self, state, time):
-        if state.get(SHARDED_STATE_KEY, False):
-            from elastica_jax.memory_block.sharded_cosserat_rod_jax import (
-                _ShardedCosseratRodBlock,
-            )
-
-            assert isinstance(self._block, _ShardedCosseratRodBlock), (
-                "Sharded wall contact requires a _ShardedCosseratRodBlock system."
-            )
-            merged = self._block.merge_shard_states(state)
-            merged = _apply_wall_contact_unified(self, merged, time)
-            return self._block.scatter_merged_state(merged, state)
         return _apply_wall_contact_unified(self, state, time)
