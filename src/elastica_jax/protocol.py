@@ -40,6 +40,8 @@ class JAXBlock(Protocol):
 
     def jax_set_state(self, state: JAXPyTree) -> None: ...
 
+    def device_put(self, value: JAXPyTree) -> JAXPyTree: ...
+
     def jax_kinematic_step(
         self,
         state: JAXPyTree,

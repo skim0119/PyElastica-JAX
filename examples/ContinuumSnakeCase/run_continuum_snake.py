@@ -184,7 +184,7 @@ def run_jax(
         jax.block_until_ready(block)
 
         times.append(current_time)
-        positions.append(np.asarray(block.position_collection_device).copy())
+        positions.append(np.asarray(block.device_state["position_collection"]).copy())
 
     start = time.perf_counter()
     current_time = 0.0

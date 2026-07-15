@@ -132,23 +132,14 @@ class ManySphereSpringJAXSimulator(ea.BaseSystemCollection):
             "Adjacent spheres must start at distinct positions to define spring rest lengths."
         )
 
-        reference_device = block.position_collection_device.device
-        self._fixed_position_device = jax.device_put(
-            block.position_collection[:, 0], device=reference_device
+        self._fixed_position_device = block.device_put(block.position_collection[:, 0])
+        self._fixed_director_device = block.device_put(
+            block.director_collection[:, :, 0]
         )
-        self._fixed_director_device = jax.device_put(
-            block.director_collection[:, :, 0], device=reference_device
-        )
-        self._rest_lengths_device = jax.device_put(
-            rest_lengths, device=reference_device
-        )
-        self._spring_constant_device = jax.device_put(
-            self.spring_constant, device=reference_device
-        )
-        self._damping_constant_device = jax.device_put(
-            self.damping_constant, device=reference_device
-        )
-        self._gravity_device = jax.device_put(self.gravity, device=reference_device)
+        self._rest_lengths_device = block.device_put(rest_lengths)
+        self._spring_constant_device = block.device_put(self.spring_constant)
+        self._damping_constant_device = block.device_put(self.damping_constant)
+        self._gravity_device = block.device_put(self.gravity)
 
     def jax_constrain_values(
         self,

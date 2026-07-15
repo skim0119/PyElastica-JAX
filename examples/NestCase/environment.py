@@ -140,7 +140,7 @@ def build_simulation(
     eaj.install_capsule_contact_state(
         rod_block,
         metadata,
-        device=rod_block.position_collection_device.device,
+        device=rod_block.device,
         dtype=rod_block.device_dtype,
     )
     return simulator, rod_block

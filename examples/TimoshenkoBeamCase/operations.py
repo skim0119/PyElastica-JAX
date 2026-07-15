@@ -97,7 +97,7 @@ def extract_centerline(
     block: eaj._CosseratRodMemoryBlock,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return arc length and transverse deflection along the beam centerline."""
-    positions = np.asarray(block.position_collection_device)
+    positions = np.asarray(block.device_state["position_collection"])
     s = positions[2]
     deflection = positions[0]
     return s, deflection

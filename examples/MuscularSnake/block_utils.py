@@ -36,7 +36,7 @@ def extract_rod_positions(
     n_rods: int,
 ) -> list[np.ndarray]:
     """Return per-rod node positions as ``(3, n_nodes)`` host arrays."""
-    positions = np.asarray(block.position_collection_device)
+    positions = np.asarray(block.device_state["position_collection"])
     assert positions.shape[0] == 3, "Rod positions must be stored as (3, n_nodes)."
     rod_positions: list[np.ndarray] = []
     for rod_idx in range(n_rods):
@@ -52,7 +52,7 @@ def extract_rod_velocities(
     n_rods: int,
 ) -> list[np.ndarray]:
     """Return per-rod nodal velocities as ``(3, n_nodes)`` host arrays."""
-    velocities = np.asarray(block.velocity_collection_device)
+    velocities = np.asarray(block.device_state["velocity_collection"])
     rod_velocities: list[np.ndarray] = []
     for rod_idx in range(n_rods):
         start = int(block.start_idx_in_rod_nodes[rod_idx])

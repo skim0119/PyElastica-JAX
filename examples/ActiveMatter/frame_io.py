@@ -19,7 +19,7 @@ def extract_stacked_positions(
     n_snakes: int,
 ) -> np.ndarray:
     """Return rod node positions as ``(n_snakes, n_nodes, 3)``."""
-    positions = np.asarray(block.position_collection_device)
+    positions = np.asarray(block.device_state["position_collection"])
     assert positions.shape[0] == 3, "Rod positions must be stored as (3, n_nodes)."
     n_nodes_per_rod = int(
         block.end_idx_in_rod_nodes[0] - block.start_idx_in_rod_nodes[0]
