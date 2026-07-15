@@ -81,6 +81,10 @@ class JAXSystems(Protocol):
 
     def final_systems(self) -> Iterable[JAXBlock]: ...
 
+    def jax_independent_block_executions(
+        self,
+    ) -> tuple[JAXBlockExecution, ...] | None: ...
+
     def jax_constrain_values(
         self,
         states: tuple[JAXPyTree, ...],
