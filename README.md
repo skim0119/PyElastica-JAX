@@ -235,13 +235,18 @@ simulator.finalize()
 
 ### Defining Block Operation
 
-`PyElastica-JAX` supports block-wise operation. This is partially tested on `PyElastica` have shown great performance boost, but not fully included due to difficulties in customizing every operation to be block-wise and JIT compatible. This enables faster implementation-execution of large-scale (many rods) simulations, especially when operation needs to be applied to all rods at each step.
+`PyElastica-JAX` supports block-wise operation. This is partially tested on `PyElastica` and have shown great performance boost, but not fully included due to difficulties in customizing every operation to be block-wise and JIT compatible. This enables faster implementation-execution of large-scale (many rods) simulations, especially when operation needs to be applied to all rods at each step.
 
 This operation module provides two style of operation: __block__ and __per-rod__.
-Block-rod is essentially a single-rod view of all rods in contiguous memory space, with ghost elements/memory padding to safely handle spanwise operations (differential and quadratures).
-__Block__ operation treats entire rod at once. It is useful to define all-element operations, such as gravity, dissipation, field forcing, etc. __Per-rod__ operation treats each rod at once. Underneat, it uses `jax.vmap` to batch the operation across all rods.
+The default memory block packs rods **horizontally** into contiguous arrays with
+ghost padding so spanwise kernels stay isolated per rod.
+__Block__ operation (`jax_block_operate_*`) is authored against one rod-shaped
+state and is batched across rods by the backend with ``vmap``.
+__Per-rod__ operation (`jax_per_rod_operate_*`) uses an explicit rod view; under
+the hood it is also batched across rods.
 
 > When using block operation with spanwise equation, carefully treat the ghost ghost elements and their behavior. Ghost padding is only to separate the numerics to be isolated within the rod, but does not have any safety to keep those values zeros. <TODO: add more details in documentation>
+> __block__ operation will be deprecated.
 
 To use block operation, add the `eaj.JAXOpsBlock` mixin and register with `operate_block`:
 
@@ -273,8 +278,15 @@ To define the operator, derive from `eaj.NoBlockOpJax` and override block-stage 
 - `jax_per_rod_operate_constrain_values` — Executed after the kinematic step.
 - `jax_per_rod_operate_constrain_rates` — Executed after the dynamic step.
 
-`jax_block_operate_*` functions receive the entire block state, and return the updated state.
-`jax_per_rod_operate_*` functions receive the single rod view and return the updated state.
+`jax_block_operate_*` functions are authored against **one rod-shaped block
+state** (for example vector fields with shape ``(3, N)``). The simulator backend
+batches that operator across every rod in the block:
+
+- horizontally packed blocks: gather each rod, ``vmap`` the operator, scatter
+- vertically stacked blocks: ``vmap`` directly over the leading rod axis
+
+`jax_per_rod_operate_*` functions receive a single rod view and return the
+updated view; they are batched the same way.
 
 > **Reusing single-rod operators on blocks:** Classes derived from ``eaj.NoOpsJax`` (the same ``jax_operate_*`` API used with ``operate(rod)``) can also be registered with ``operate_block(rod_block).using(...)``. This is intentional: one operator instance is created per rod in the block (so ``__init__`` can read that rod's ``_system``), and the existing rod-local kernels are batched through the same per-rod gather/scatter path as ``jax_per_rod_operate_*``. For example, ``eaj.OneEndFixedJax`` works with both ``operate(rod)`` and ``operate_block(rod_block)`` without duplicating the implementation under ``jax_per_rod_operate_*``.
 
@@ -365,15 +377,53 @@ Pass an explicit backend to `configure_rod_block` so rod state is allocated on t
 device before `finalize()`:
 
 ```py
-rod_block = eaj.configure_rod_block(device="cuda", device_dtype=np.float64)
+rod_block = eaj.configure_rod_block(device="cuda")
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 ...
 simulator.finalize()
 ```
 
-### Multi-device Block Execution
+### Vertical (stacked) rod block
+
+By default, `configure_rod_block` packs rods **horizontally**: arrays are
+concatenated along the spatial axis with ghost separators, e.g. position
+``(3, N_total)``.
+
+For __equal-sized__ rods, you can instead pack rods **vertically** by
+stacking on a leading batch axis, sized ``(N_rods, 3, N_elements)``.
+
+| field kind | shape |
+| --- | --- |
+| vector | ``(n_rods, 3, N)`` |
+| tensor | ``(n_rods, 3, 3, N)`` |
+| scalar | ``(n_rods, N)`` |
+
+where ``N`` is ``n_nodes``, ``n_elems``, or ``n_voronoi`` depending on the
+variable. Timestep kernels and `jax_block_operate_*` operators run under
+``jax.vmap`` over the rod axis. This gives greater parallelism in GPU or multi-device.
+
+```py
+rod_block = eaj.configure_rod_block(
+    device="cpu",
+    inner_block_cls=eaj._CosseratRodVerticalMemoryBlock,  # <--
+)
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
+```
+
+Constraints:
+
+- all rods in the block must share the same ``n_elems`` (otherwise finalize
+  raises an assertion)
+- ring rods are not supported
+
+Author `jax_block_operate_*` against one rod's arrays; do not special-case the
+stacked layout in user operators. The backend applies ``vmap`` for you.
+
+### Multi-device Block Execution (User control)
 
 > Work-in-progress
+> Not exactly decided to keep both mpi and jax.distributed support. Maybe they are complementary?
+> Keep explicit control on shard block? or Internally handle?
 
 Use separate blocks when each rod group is independent. Each block is assigned to
 one device and compiled as its own JIT `fori_loop` rollout:
@@ -393,24 +443,11 @@ simulator.operate_block(block_1).using(MyBlockOp)
 See the [explicit multi-block tutorial](tutorial/01-block-multi-device.py) for a
 complete example.
 
-Use one sharded block when the rods should remain one logical block. Rods are split
-evenly across the requested devices:
+### Multi-device Block Execution (Distributed shard)
 
-```py
-devices = eaj.resolve_backend_devices("cuda")[:2]
-rod_block = eaj.configure_rod_block_sharded(
-    devices=devices,
-    device_dtype=np.float64,
-)
-simulator.enable_block_supports(ea.CosseratRod, rod_block)
-simulator.operate_block(rod_block).using(MyBlockOp)
-```
-
-See the [sharded block tutorial](tutorial/02-block-multi-device-sharded.py) for a
-complete example.
-
-Both layouts run compiled loops without a Python timestep fallback. Cross-device
-operators that couple independent blocks are currently rejected.
+> TODO: Old implementation is removed due to new vertical block design. With
+> jax.distributed modules, this could enable cross-node execution easily.
+> Not yet sure how to handle operations
 
 ### Multi-core Multi-host CPU Execution
 
@@ -452,10 +489,7 @@ class CantileverSimulator(
 
 
 simulator = CantileverSimulator()
-rod_block = eaj.configure_rod_block_mpi(
-    comm=comm,
-    device_dtype=np.float64,
-)
+rod_block = eaj.configure_rod_block_mpi(comm=comm)
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
 # Each MPI rank owns a disjoint rod subset.
@@ -502,9 +536,11 @@ are local to each rank's block.
 This repository expand the usage of `block` concept directly, along with `JAX`'s concept of mapping memory and function.
 
 - `memory_block` is a block that is a collection of rods (systems).
-- `sharded_block` is a block that is sharded into multiple blocks on one process.
+- `vertical_block` / stacked block packs equal-length rods on a leading batch
+  axis ``(n_rods, ...)`` and batches kernels with ``vmap`` (no ghost separators).
 - `mpi_block` is a rank-local memory block: rods are partitioned across MPI ranks.
 
 ## Features that are extended from PyElastica
 
-- `configure_rod_block_sharded(..., block_checkpoint=path)`: pass the checkpoint path when configuring the block. During `finalize()` → `construct_memory_block_structures` → block `__init__`, an existing checkpoint skips packing rod data into the block and loads saved state instead; a missing file triggers a save after block construction.
+- `configure_rod_block(..., inner_block_cls=eaj._CosseratRodVerticalMemoryBlock)`:
+  use the stacked-axis rod block for equal-length straight rods.

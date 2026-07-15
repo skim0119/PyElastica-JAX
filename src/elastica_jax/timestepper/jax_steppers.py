@@ -26,6 +26,94 @@ class PositionVerletJAX:
     def __init__(self) -> None:
         self._compiled_rollout_cache: dict[tuple[Any, ...], Any] = {}
 
+    def integrate(
+        self,
+        system_collection: JAXSystems,
+        *,  # Force user to explicitly define the below items
+        time: float,
+        final_time: float,
+        dt: float,
+    ) -> float:
+        """
+        Integrate Position Verlet steps from ``time`` to ``final_time`` with step ``dt``.
+
+        Parameters
+        ----------
+        system_collection
+            Finalized simulator exposing JAX block and stage transforms.
+        time
+            Current simulation time.
+        final_time
+            Target simulation time. Must differ from ``time`` by an integer
+            multiple of ``dt``.
+        dt
+            Fixed Position Verlet step size.
+
+        Returns
+        -------
+        float
+            Final simulation time reached by the rollout.
+        """
+        assert dt > 0.0, "dt must be positive."
+        assert final_time >= time, "final_time must be greater than or equal to time."
+
+        simulation_time = np.float64(time)
+        target_time = np.float64(final_time)
+        simulation_dt = np.float64(dt)
+        duration = float(target_time - simulation_time)
+        n_steps = int(np.round(duration / float(simulation_dt)))
+
+        systems = tuple(system_collection.final_systems())
+        assert systems, "system_collection must contain at least one JAX block."
+        states = tuple(system.jax_get_state() for system in systems)
+
+        reference_dtype = self._reference_dtype_from_states(states)
+        spans_multiple_devices = self._state_spans_multiple_devices(states)
+        independent_executions = None
+        if spans_multiple_devices and hasattr(
+            system_collection, "jax_independent_block_executions"
+        ):
+            independent_executions = (
+                system_collection.jax_independent_block_executions()
+            )
+        if independent_executions is not None:
+            final_time_jax, final_states = self._integrate_independent_blocks(
+                systems=systems,
+                states=states,
+                executions=independent_executions,
+                n_steps=n_steps,
+                simulation_time=simulation_time,
+                simulation_dt=simulation_dt,
+            )
+            for system, state in zip(systems, final_states, strict=True):
+                system.jax_set_state(state)
+            return float(final_time_jax)
+
+        assert not spans_multiple_devices, (
+            "Multi-device rollout requires block-local execution metadata. "
+            "Cross-block coupled operations are not supported by the jitted "
+            "PositionVerletJAX rollout."
+        )
+
+        compiled_rollout = self._get_compiled_rollout(
+            system_collection=system_collection,
+            systems=systems,
+            n_steps=n_steps,
+            simulation_dt=simulation_dt,
+            reference_dtype=reference_dtype,
+        )
+        reference_device = self._reference_device_from_states(systems, states)
+        time_jax = jax.device_put(
+            reference_dtype.type(simulation_time),
+            device=reference_device,
+        )
+        final_time_jax, final_states = compiled_rollout(time_jax, states)
+
+        for system, state in zip(systems, final_states):
+            system.jax_set_state(state)
+
+        return float(final_time_jax)
+
     @staticmethod
     def _body_fn(
         _: int,
@@ -237,21 +325,21 @@ class PositionVerletJAX:
         simulation_time: np.float64,
         simulation_dt: np.float64,
     ) -> tuple[jax.Array, tuple[JAXPyTree, ...]]:
-        assert len(executions) == len(
-            systems
-        ), "Independent block execution metadata must match finalized systems."
+        assert len(executions) == len(systems), (
+            "Independent block execution metadata must match finalized systems."
+        )
         final_times: list[jax.Array] = []
         final_states: list[JAXPyTree] = []
 
         for system, state, execution in zip(systems, states, executions, strict=True):
             if execution.shard_stages is not None:
-                assert isinstance(
-                    system, _ShardedCosseratRodBlock
-                ), "Shard execution stages require a sharded block."
+                assert isinstance(system, _ShardedCosseratRodBlock), (
+                    "Shard execution stages require a sharded block."
+                )
                 shard_states = state["shards"]
-                assert len(execution.shard_stages) == len(
-                    shard_states
-                ), "Shard execution metadata must match block state shards."
+                assert len(execution.shard_stages) == len(shard_states), (
+                    "Shard execution metadata must match block state shards."
+                )
                 updated_shards = []
                 for shard_system, shard_state, shard_stages in zip(
                     system._shard_blocks,
@@ -354,90 +442,3 @@ class PositionVerletJAX:
             if hasattr(leaf, "dtype"):
                 return np.dtype(leaf.dtype)
         return np.dtype(np.float64)
-
-    def integrate(
-        self,
-        SystemCollection: JAXSystems,
-        time: float,
-        final_time: float,
-        dt: float,
-    ) -> float:
-        """
-        Integrate Position Verlet steps from ``time`` to ``final_time`` with step ``dt``.
-
-        Parameters
-        ----------
-        SystemCollection
-            Finalized simulator exposing JAX block and stage transforms.
-        time
-            Current simulation time.
-        final_time
-            Target simulation time. Must differ from ``time`` by an integer
-            multiple of ``dt``.
-        dt
-            Fixed Position Verlet step size.
-
-        Returns
-        -------
-        float
-            Final simulation time reached by the rollout.
-        """
-        assert dt > 0.0, "dt must be positive."
-        assert final_time >= time, "final_time must be greater than or equal to time."
-
-        simulation_time = np.float64(time)
-        target_time = np.float64(final_time)
-        simulation_dt = np.float64(dt)
-        duration = float(target_time - simulation_time)
-        n_steps = int(np.round(duration / float(simulation_dt)))
-        assert np.isclose(
-            simulation_time + n_steps * simulation_dt, target_time
-        ), "final_time - time must be an integer multiple of dt."
-
-        systems = tuple(SystemCollection.final_systems())
-        assert systems, "SystemCollection must contain at least one JAX block."
-        states = tuple(system.jax_get_state() for system in systems)
-        reference_dtype = self._reference_dtype_from_states(states)
-        spans_multiple_devices = self._state_spans_multiple_devices(states)
-        independent_executions = None
-        if spans_multiple_devices and hasattr(
-            SystemCollection, "jax_independent_block_executions"
-        ):
-            independent_executions = SystemCollection.jax_independent_block_executions()
-        if independent_executions is not None:
-            final_time_jax, final_states = self._integrate_independent_blocks(
-                systems=systems,
-                states=states,
-                executions=independent_executions,
-                n_steps=n_steps,
-                simulation_time=simulation_time,
-                simulation_dt=simulation_dt,
-            )
-            for system, state in zip(systems, final_states, strict=True):
-                system.jax_set_state(state)
-            return float(final_time_jax)
-
-        assert not spans_multiple_devices, (
-            "Multi-device rollout requires block-local execution metadata. "
-            "Cross-block coupled operations are not supported by the jitted "
-            "PositionVerletJAX rollout."
-        )
-
-        compiled_rollout = self._get_compiled_rollout(
-            system_collection=SystemCollection,
-            systems=systems,
-            n_steps=n_steps,
-            simulation_dt=simulation_dt,
-            reference_dtype=reference_dtype,
-        )
-        reference_device = self._reference_device_from_states(systems, states)
-        time_jax = jax.device_put(
-            reference_dtype.type(simulation_time),
-            device=reference_device,
-        )
-        final_time_jax, final_states = compiled_rollout(time_jax, states)
-
-        for system, state in zip(systems, final_states):
-            system.jax_set_state(state)
-
-        return float(final_time_jax)

@@ -81,16 +81,8 @@ class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
 JAXRodBlock: TypeAlias = (
     eaj._CosseratRodMemoryBlock
     | eaj._CosseratRodVerticalMemoryBlock
-    | eaj._ShardedCosseratRodBlock
     | eaj._MpiCosseratRodBlock
 )
-
-
-def two_gpu_sharded_devices() -> tuple[jax.Device, ...]:
-    """Use the first two CUDA devices for a balanced sharded rollout."""
-    devices = eaj.resolve_backend_devices("cuda")
-    assert len(devices) >= 2, "gpu2x_sharded requires at least two CUDA devices."
-    return devices[:2]
 
 
 def _distinct_cosserat_rod_types() -> tuple[type[ea.CosseratRod], type[ea.CosseratRod]]:
@@ -239,12 +231,7 @@ def build_jax_sim(
 ) -> tuple[JAXSimulator, JAXRodBlock]:
     rod_block: JAXRodBlock
     if sharded:
-        devices = tuple(device) if not isinstance(device, jax.Device) else (device,)
-        rod_block = eaj.configure_rod_block_sharded(
-            devices=devices,
-            device_dtype=np.dtype(device_dtype),
-            inner_block_cls=inner_block_cls or eaj._CosseratRodMemoryBlock,
-        )
+        raise NotImplementedError
     else:
         assert isinstance(device, jax.Device), (
             "A non-sharded JAX block requires exactly one device."
@@ -498,6 +485,8 @@ def run_jax_rollout_gpu2x_sharded(
     steps: int,
     warmup_runs: int,
 ) -> BenchmarkTiming:
+    raise NotImplementedError
+
     """Build a 2-GPU sharded JAX block simulator and time a Position Verlet rollout."""
     assert n_snakes % 2 == 0, "gpu2x_sharded requires a snake count divisible by two."
     dtype = np.dtype(np.float64)
@@ -570,7 +559,9 @@ def mpi_snakes_per_rank(
     int
         ``snakes_per_rank_multiplier * (2 ** snakes_per_rank_exp)``.
     """
-    assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
+    assert snakes_per_rank_multiplier > 0, (
+        "snakes_per_rank_multiplier must be positive."
+    )
     return snakes_per_rank_multiplier * (2**snakes_per_rank_exp)
 
 
@@ -581,10 +572,13 @@ def mpi_global_snake_count(
     snakes_per_rank_multiplier: int = 1,
 ) -> int:
     """Return the weak-scaling global snake count for an MPI world size."""
-    return mpi_snakes_per_rank(
-        snakes_per_rank_exp=snakes_per_rank_exp,
-        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
-    ) * comm_size
+    return (
+        mpi_snakes_per_rank(
+            snakes_per_rank_exp=snakes_per_rank_exp,
+            snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+        )
+        * comm_size
+    )
 
 
 def resolve_mpi_block_device(*, backend: str, comm: Any) -> jax.Device:
@@ -622,9 +616,7 @@ def build_jax_sim_mpi(
     """Build a JAX simulator with rods distributed across MPI ranks."""
     device = resolve_mpi_block_device(backend=backend, comm=comm)
     inner_block_cls = (
-        eaj._CosseratRodVerticalMemoryBlock
-        if vertical
-        else eaj._CosseratRodMemoryBlock
+        eaj._CosseratRodVerticalMemoryBlock if vertical else eaj._CosseratRodMemoryBlock
     )
     rod_block = eaj.configure_rod_block_mpi(
         comm=comm,

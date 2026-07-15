@@ -17,9 +17,6 @@ path and are rejected instead of falling back to a Python timestep loop.
 This script emulates multiple CPU devices with ``XLA_FLAGS`` so it runs
 without CUDA hardware. On a multi-GPU machine, use
 ``eaj.resolve_backend_devices("cuda")`` instead of ``jax.devices("cpu")``.
-
-For rods split across devices inside one logical block, see
-``02-block-multi-device-sharded.py`` and the ``gpu2x_sharded`` benchmark backend.
 """
 
 from __future__ import annotations

@@ -157,6 +157,7 @@ def _load_scaling_csv(csv_path: Path) -> tuple[dict[str, list[SweepPoint]], int]
 )
 @click.option(
     "--skip-gpu2x-sharded",
+    default=False,
     is_flag=True,
     help="Skip the 2-GPU sharded CUDA sweep.",
 )
