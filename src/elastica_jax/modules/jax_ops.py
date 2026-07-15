@@ -23,6 +23,10 @@ _STAGE_METHODS = (
 
 
 class JAXBasicMixins:
+    def jax_independent_block_executions(self) -> None:
+        """Return ``None`` for collections that do not support block-local rollouts."""
+        return None
+
     def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
         for func in self._feature_group_synchronize:
             states = func(states=states, time=time)

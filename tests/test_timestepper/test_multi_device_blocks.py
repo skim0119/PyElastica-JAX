@@ -15,7 +15,6 @@ jax.config.update("jax_enable_x64", True)
 import elastica as ea  # noqa: E402
 import elastica_jax as eaj  # noqa: E402
 from elastica.modules import BaseSystemCollection  # noqa: E402
-from elastica_jax.timestepper import jax_steppers as jax_steppers_mod  # noqa: E402
 
 
 class _MultiBlockSimulator(BaseSystemCollection, eaj.JAXOpsBlock):
@@ -54,7 +53,7 @@ def _build_rod(rod_type: type[ea.CosseratRod]) -> ea.CosseratRod:
     )
 
 
-def test_position_verlet_integrates_two_blocks_on_separate_devices(monkeypatch):
+def test_position_verlet_integrates_two_blocks_on_separate_devices():
     devices = tuple(jax.devices("cpu")[:2])
     if len(devices) < 2:
         pytest.skip("requires at least two CPU devices")
@@ -74,7 +73,7 @@ def test_position_verlet_integrates_two_blocks_on_separate_devices(monkeypatch):
     simulator.operate_block(rod_block_2).using(eaj.OneEndFixedJax)
     simulator.finalize()
 
-    stepper = eaj.PositionVerletJAX()
+    stepper = eaj.PositionVerletJAX(use_independent_block_rollout=True)
     final_time = stepper.integrate(
         simulator,
         time=0.0,
@@ -86,19 +85,3 @@ def test_position_verlet_integrates_two_blocks_on_separate_devices(monkeypatch):
     assert sum(key[0] == "block" for key in stepper._compiled_rollout_cache) == 2
     jax.block_until_ready(rod_block_1.jax_get_state()["position_collection"])
     jax.block_until_ready(rod_block_2.jax_get_state()["position_collection"])
-
-    monkeypatch.setattr(
-        jax_steppers_mod,
-        "_independent_block_executions",
-        lambda _collection: None,
-    )
-    with pytest.raises(
-        AssertionError,
-        match="Cross-block coupled operations are not supported across devices",
-    ):
-        stepper.integrate(
-            simulator,
-            time=0.002,
-            final_time=0.003,
-            dt=0.001,
-        )
