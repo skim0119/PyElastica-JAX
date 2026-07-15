@@ -7,6 +7,7 @@ import jax
 import numpy as np
 from ..protocol import (
     JAXBlock,
+    JAXBlockExecution,
     JAXBlockStages,
     JAXPyTree,
     JAXSystems,
@@ -65,12 +66,12 @@ class PositionVerletJAX:
 
         reference_dtype = self._reference_dtype_from_states(states)
         spans_multiple_devices = self._state_spans_multiple_devices(states)
-        independent_executions = None
-        if spans_multiple_devices and hasattr(
-            system_collection, "jax_independent_block_executions"
-        ):
-            independent_executions = (
-                system_collection.jax_independent_block_executions()
+        if spans_multiple_devices:
+            independent_executions = _independent_block_executions(
+                system_collection
+            )
+            assert independent_executions is not None, (
+                "Cross-block coupled operations are not supported across devices."
             )
             assert len(independent_executions) == len(systems), (
                 "Independent block execution metadata must match finalized systems."
@@ -357,3 +358,65 @@ class PositionVerletJAX:
             if hasattr(leaf, "dtype"):
                 return np.dtype(leaf.dtype)
         return np.dtype(np.float64)
+
+
+def _independent_block_executions(
+    system_collection: JAXSystems,
+) -> tuple[JAXBlockExecution, ...] | None:
+    """
+    Build per-block stage transforms when no operator couples blocks.
+
+    Returns
+    -------
+    tuple[JAXBlockExecution, ...] | None
+        One execution description per finalized block. ``None`` if the
+        collection lacks local block-stage metadata, or if registered stage
+        operators couple block states.
+    """
+    local_block_stages = getattr(system_collection, "_jax_local_block_stages", None)
+    if local_block_stages is None:
+        return None
+
+    constrain_values = getattr(
+        system_collection, "_feature_group_constrain_values", None
+    )
+    synchronize = getattr(system_collection, "_feature_group_synchronize", None)
+    constrain_rates = getattr(
+        system_collection, "_feature_group_constrain_rates", None
+    )
+    if constrain_values is None or synchronize is None or constrain_rates is None:
+        return None
+
+    stage_groups = {
+        "constrain_values": constrain_values,
+        "synchronize": synchronize,
+        "constrain_rates": constrain_rates,
+    }
+    registered_counts = {
+        stage: sum(len(stage_map[stage]) for stage_map in local_block_stages.values())
+        for stage in stage_groups
+    }
+    actual_counts = {
+        stage: sum(1 for _ in group) for stage, group in stage_groups.items()
+    }
+    damping = getattr(system_collection, "_feature_group_damping", ())
+    actual_counts["constrain_rates"] += sum(1 for _ in damping)
+    if registered_counts != actual_counts:
+        return None
+
+    executions = []
+    for block_state_idx, _system in enumerate(system_collection.final_systems()):
+        stage_map = local_block_stages.get(
+            block_state_idx,
+            {stage: [] for stage in stage_groups},
+        )
+        executions.append(
+            JAXBlockExecution(
+                stages=JAXBlockStages(
+                    constrain_values=tuple(stage_map["constrain_values"]),
+                    synchronize=tuple(stage_map["synchronize"]),
+                    constrain_rates=tuple(stage_map["constrain_rates"]),
+                )
+            )
+        )
+    return tuple(executions)
