@@ -127,8 +127,6 @@ def _load_scaling_csv(csv_path: Path) -> tuple[dict[str, list[SweepPoint]], int]
 @click.option("--cpu-max-exp", type=int, default=12, show_default=True)
 @click.option("--gpu2x-min-exp", type=int, default=1, show_default=True)
 @click.option("--gpu2x-max-exp", type=int, default=8, show_default=True)
-@click.option("--gpu2x-sharded-min-exp", type=int, default=1, show_default=True)
-@click.option("--gpu2x-sharded-max-exp", type=int, default=8, show_default=True)
 @click.option("--pyelastica-min-exp", type=int, default=1, show_default=True)
 @click.option("--pyelastica-max-exp", type=int, default=12, show_default=True)
 @click.option(
@@ -155,12 +153,6 @@ def _load_scaling_csv(csv_path: Path) -> tuple[dict[str, list[SweepPoint]], int]
 @click.option(
     "--skip-gpu2x", is_flag=True, help="Skip the 2-GPU dual-block CUDA sweep."
 )
-@click.option(
-    "--skip-gpu2x-sharded",
-    default=False,
-    is_flag=True,
-    help="Skip the 2-GPU sharded CUDA sweep.",
-)
 @click.option("--skip-pyelastica", is_flag=True, help="Skip the PyElastica sweep.")
 @click.option("--quiet", is_flag=True, help="Disable progress bars.")
 def main(
@@ -172,8 +164,6 @@ def main(
     cpu_max_exp: int,
     gpu2x_min_exp: int,
     gpu2x_max_exp: int,
-    gpu2x_sharded_min_exp: int,
-    gpu2x_sharded_max_exp: int,
     pyelastica_min_exp: int,
     pyelastica_max_exp: int,
     output: Path,
@@ -182,7 +172,6 @@ def main(
     skip_cuda: bool,
     skip_cpu: bool,
     skip_gpu2x: bool,
-    skip_gpu2x_sharded: bool,
     skip_pyelastica: bool,
     quiet: bool,
 ) -> None:
@@ -194,7 +183,7 @@ def main(
         return
 
     assert not (
-        skip_cuda and skip_cpu and skip_gpu2x and skip_gpu2x_sharded and skip_pyelastica
+        skip_cuda and skip_cpu and skip_gpu2x and skip_pyelastica
     ), "At least one backend sweep is required."
 
     series: dict[str, list[SweepPoint]] = {}
@@ -222,15 +211,6 @@ def main(
             "gpu2x",
             gpu2x_min_exp,
             gpu2x_max_exp,
-            steps=steps,
-            warmup_runs=warmup_runs,
-            verbose=not quiet,
-        )
-    if not skip_gpu2x_sharded:
-        series["gpu2x_sharded"] = _sweep_backend(
-            "gpu2x_sharded",
-            gpu2x_sharded_min_exp,
-            gpu2x_sharded_max_exp,
             steps=steps,
             warmup_runs=warmup_runs,
             verbose=not quiet,

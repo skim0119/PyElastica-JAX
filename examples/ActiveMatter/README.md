@@ -30,9 +30,8 @@ uv run --no-sync python examples/ActiveMatter/run_snake_pit.py --gpu      # CUDA
 uv run --no-sync python examples/ActiveMatter/run_snake_pit.py --smoke    # short
 ```
 
-`--smoke` downscales the run while still exercising every operator. Use `-N/--n-snakes`,
-`--n-elements`, and `-T/--final-time` for scaling studies. `--mesh auto` uses one
-shard per local device; `--mesh unified` keeps a single shard.
+`--smoke` downscales the run while still exercising every operator. Use
+`-N/--n-snakes` and `-T/--final-time` for scaling studies.
 
 Frames are streamed to `data/` (or `data_<run-name>/` when `--run-name` is set):
 
