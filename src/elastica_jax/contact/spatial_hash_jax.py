@@ -35,11 +35,7 @@ def capsule_aabb_overlap(
 
 
 def _neighbor_offsets_without_origin() -> jax.Array:
-    offsets = [
-        offset
-        for offset in _NEIGHBOR_OFFSETS
-        if offset != (0, 0, 0)
-    ]
+    offsets = [offset for offset in _NEIGHBOR_OFFSETS if offset != (0, 0, 0)]
     return jnp.asarray(offsets, dtype=jnp.int32)
 
 
@@ -47,14 +43,10 @@ def _segment_bounds(sorted_keys: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Return per-sorted-position half-open segment bounds ``[lo, hi)``."""
     n = sorted_keys.shape[0]
     indices = jnp.arange(n, dtype=jnp.int32)
-    is_start = jnp.concatenate(
-        [jnp.array([True]), sorted_keys[1:] != sorted_keys[:-1]]
-    )
+    is_start = jnp.concatenate([jnp.array([True]), sorted_keys[1:] != sorted_keys[:-1]])
     seg_lo = jnp.maximum.accumulate(jnp.where(is_start, indices, jnp.int32(-1)))
     seg_lo = jnp.where(seg_lo < 0, jnp.int32(0), seg_lo)
-    is_end = jnp.concatenate(
-        [sorted_keys[1:] != sorted_keys[:-1], jnp.array([True])]
-    )
+    is_end = jnp.concatenate([sorted_keys[1:] != sorted_keys[:-1], jnp.array([True])])
     seg_hi_fill = jnp.where(is_end, indices, jnp.int32(n))
     seg_hi = jnp.minimum.accumulate(seg_hi_fill[::-1])[::-1] + jnp.int32(1)
     return seg_lo, seg_hi

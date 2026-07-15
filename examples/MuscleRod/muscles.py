@@ -83,9 +83,7 @@ def create_octopus_muscle_groups(rod: ea.CosseratRod, activation_array) -> Batch
             rest_muscle_area=om_rest_muscle_area,
             max_muscle_stress=OM_MAX_MUSCLE_STRESS,
             activation=activation_array[
-                TM_GROUP_COUNT
-                + LM_GROUP_COUNT
-                + 1 : TM_GROUP_COUNT
+                TM_GROUP_COUNT + LM_GROUP_COUNT + 1 : TM_GROUP_COUNT
                 + LM_GROUP_COUNT
                 + 2
             ],

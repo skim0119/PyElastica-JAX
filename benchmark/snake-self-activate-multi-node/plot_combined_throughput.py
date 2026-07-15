@@ -7,7 +7,6 @@ from collections import defaultdict
 from pathlib import Path
 
 import click
-from matplotlib.patches import bbox_artist
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D

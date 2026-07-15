@@ -1,7 +1,6 @@
 #* Variables
 PYTHON := python3
 PYTHONPATH := `pwd`
-AUTOFLAKE_ARGS := -r
 PYTHON_VERSION :=
 
 #* Installation
@@ -31,33 +30,23 @@ pre-commit-install:
 	pre-commit install
 
 #* Formatters
-.PHONY: black
-black:
-	uv run --no-sync black --version
-	uv run --no-sync black --config pyproject.toml src/elastica_jax tests examples benchmark
+.PHONY: ruff-format
+ruff-format:
+	uv run --no-sync ruff --version
+	uv run --no-sync ruff format src/elastica_jax tests examples benchmark
 
-.PHONY: black-check
-black-check:
-	uv run --no-sync black --version
-	uv run --no-sync black --diff --check --config pyproject.toml src/elastica_jax tests examples
+.PHONY: ruff-format-check
+ruff-format-check:
+	uv run --no-sync ruff --version
+	uv run --no-sync ruff format --check src/elastica_jax tests examples benchmark
 
-.PHONY: flake8
-flake8:
-	uv run --no-sync flake8 --version
-	uv run --no-sync flake8 src/elastica_jax
-
-.PHONY: autoflake-check
-autoflake-check:
-	uv run --no-sync autoflake --version
-	uv run --no-sync autoflake --check $(AUTOFLAKE_ARGS) src/elastica_jax tests examples
-
-.PHONY: autoflake-format
-autoflake-format:
-	uv run --no-sync autoflake --version
-	uv run --no-sync autoflake --in-place $(AUTOFLAKE_ARGS) src/elastica_jax tests examples
+.PHONY: ruff-check
+ruff-check:
+	uv run --no-sync ruff --version
+	uv run --no-sync ruff check src/elastica_jax tests examples benchmark
 
 .PHONY: format-codestyle
-format-codestyle: black autoflake-format
+format-codestyle: ruff-format
 
 .PHONY: mypy
 mypy:
@@ -81,7 +70,7 @@ test_coverage_xml:
 	NUMBA_DISABLE_JIT=1 uv run --no-sync pytest --cov=src/elastica_jax --cov-report=xml -c pyproject.toml tests
 
 .PHONY: check-codestyle
-check-codestyle: black-check flake8 autoflake-check
+check-codestyle: ruff-format-check ruff-check
 
 .PHONY: formatting
 formatting: format-codestyle

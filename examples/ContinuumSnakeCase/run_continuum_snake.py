@@ -169,7 +169,8 @@ def run_jax(
         final_time=np.float64(parameters.final_time),
         dt=np.float64(parameters.time_step),
     )
-    jax.block_until_ready(block.position_collection_device)
+    jax.block_until_ready(block)
+
     block.jax_set_state(dict(initial_state))
 
     steps_per_frame = max(1, round((1.0 / fps) / parameters.time_step))
@@ -180,7 +181,8 @@ def run_jax(
     positions: list[np.ndarray] = []
 
     def capture(current_time: float) -> None:
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         times.append(current_time)
         positions.append(np.asarray(block.position_collection_device).copy())
 

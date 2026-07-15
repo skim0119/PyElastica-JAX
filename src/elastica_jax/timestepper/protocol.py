@@ -2,10 +2,6 @@ __doc__ = "Time stepper interface"
 
 from typing import Protocol
 
-from elastica.typing import (
-    SystemType,
-    SystemCollectionType,
-)
 from elastica_jax.protocol import JAXSystems
 
 import numpy as np

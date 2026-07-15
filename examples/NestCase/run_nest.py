@@ -179,7 +179,8 @@ def run_simulation(
     }
 
     def record(current_time: float) -> None:
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         max_z, min_z, energy = sample_diagnostics(block, gravity=parameters.gravity)
         assert np.isfinite(max_z) and np.isfinite(energy), (
             f"Simulation diverged at t={current_time:.4e} s "

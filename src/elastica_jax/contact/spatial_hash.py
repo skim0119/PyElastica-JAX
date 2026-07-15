@@ -76,7 +76,9 @@ def rebuild_all_pairs(
     This mirrors PyElastica's non-hashed rung: every cross-rod candidate is
     considered, then pruned by bounding-box overlap (no spatial hash).
     """
-    assert centers.ndim == 2 and centers.shape[1] == 3, "centers must have shape (N, 3)."
+    assert centers.ndim == 2 and centers.shape[1] == 3, (
+        "centers must have shape (N, 3)."
+    )
     n_capsules = centers.shape[0]
     assert (
         rod_ids.shape == (n_capsules,)
@@ -152,9 +154,9 @@ def rebuild_spatial_hash_pairs(
     max_pairs: int,
 ) -> SpatialHashPairBuffer:
     """Rebuild a bounded cross-rod capsule pair list from capsule geometry."""
-    assert (
-        centers.ndim == 2 and centers.shape[1] == 3
-    ), "centers must have shape (N, 3)."
+    assert centers.ndim == 2 and centers.shape[1] == 3, (
+        "centers must have shape (N, 3)."
+    )
     n_capsules = centers.shape[0]
     assert (
         rod_ids.shape == (n_capsules,)

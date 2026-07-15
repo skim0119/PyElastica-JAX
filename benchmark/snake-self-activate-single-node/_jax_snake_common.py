@@ -471,6 +471,7 @@ def run_jax_rollout(
 
     return instantiate_seconds, rollout_seconds
 
+
 def run_jax_rollout_gpu2x(
     *,
     n_snakes: int,

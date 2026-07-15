@@ -15,3 +15,23 @@ repos:
         exclude: LICENSE
       - id: check-added-large-files
       - id: mixed-line-ending
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: ./.venv/bin/python -m mypy --config-file pyproject.toml src/elastica_jax
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest
+        name: pytest
+        entry: ./.venv/bin/python -m pytest -c pyproject.toml tests
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

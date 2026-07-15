@@ -134,9 +134,9 @@ def main(
     quiet: bool,
 ) -> None:
     """Sweep rod count and plot all backends on one figure."""
-    assert not (
-        skip_pyelastica and skip_cpu and skip_cpu_old and skip_gpu
-    ), "At least one backend must be enabled."
+    assert not (skip_pyelastica and skip_cpu and skip_cpu_old and skip_gpu), (
+        "At least one backend must be enabled."
+    )
 
     series: dict[str, list[tuple[int, int, float, float]]] = {}
     verbose = not quiet

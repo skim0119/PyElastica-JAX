@@ -7,13 +7,13 @@ from typing import Any
 import numpy as np
 
 from elastica_jax.memory_block.memory_block_rod_jax import (
-    MemoryBlockCosseratRodJax,
+    _CosseratRodMemoryBlock,
     _jax_trapezoidal_for_block_structure,
     _jax_two_point_difference_for_block_structure,
 )
 from elastica.typing import SystemIdxType
 
-from muscle_rod import MuscleArm
+from .muscle_rod import MuscleArm
 
 import jax
 import jax.numpy as jnp
@@ -138,7 +138,7 @@ def _jax_compute_muscle_loads(
     return nodal_load, torque_load
 
 
-class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
+class MemoryBlockMuscleArmJax(_CosseratRodMemoryBlock):
     """Packed JAX block for one or more open ``MuscleArm`` rods."""
 
     def __init__(
@@ -148,20 +148,21 @@ class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
         **kwargs: Any,
     ) -> None:
         assert systems, "MemoryBlockMuscleArmJax requires at least one MuscleArm."
-        assert all(
-            not rod.ring_rod_flag for rod in systems
-        ), "MemoryBlockMuscleArmJax currently supports only open MuscleArm rods."
-        assert all(
-            rod.muscle_config is not None for rod in systems
-        ), "Every MuscleArm must be configured before block construction."
-        super().__init__(systems, system_idx_list, **kwargs)
+        assert all(not rod.ring_rod_flag for rod in systems), (
+            "MemoryBlockMuscleArmJax currently supports only open MuscleArm rods."
+        )
+        assert all(rod.muscle_config is not None for rod in systems), (
+            "Every MuscleArm must be configured before block construction."
+        )
+        super().__init__(**kwargs)
+        self(systems, system_idx_list)
         self._pack_muscle_configuration(systems)
 
     def _pack_muscle_configuration(self, systems: list[MuscleArm]) -> None:
         configs = [rod.muscle_config for rod in systems]
-        assert all(
-            config is not None for config in configs
-        ), "Every MuscleArm must have a MuscleConfig."
+        assert all(config is not None for config in configs), (
+            "Every MuscleArm must have a MuscleConfig."
+        )
         max_muscles = max(config.ratio_muscle_position.shape[0] for config in configs)  # type: ignore[union-attr]
         n_elems = self.n_elems
         ratio = np.zeros((max_muscles, 3, n_elems))
@@ -187,16 +188,16 @@ class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
             n_muscles = config.ratio_muscle_position.shape[0]
             ratio[:n_muscles, :, start:end] = config.ratio_muscle_position
             arrays["rest_muscle_area"][:n_muscles, start:end] = config.rest_muscle_area
-            arrays["max_muscle_stress"][
-                :n_muscles, start:end
-            ] = config.max_muscle_stress
+            arrays["max_muscle_stress"][:n_muscles, start:end] = (
+                config.max_muscle_stress
+            )
             arrays["transverse_muscle"][:n_muscles, start:end] = (
                 config.transverse_muscle[:, None]
             )
             assert config.muscle_rest_length is not None
-            arrays["muscle_rest_length"][
-                :n_muscles, start:end
-            ] = config.muscle_rest_length
+            arrays["muscle_rest_length"][:n_muscles, start:end] = (
+                config.muscle_rest_length
+            )
             shape = (n_muscles, end - start)
             for name in (
                 "activation_offset",
@@ -207,9 +208,9 @@ class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
                 arrays[name][:n_muscles, start:end] = np.broadcast_to(
                     np.asarray(getattr(config, name)), shape
                 )
-            arrays["force_length_coefficient"][
-                :n_muscles, start:end
-            ] = config.force_length_coefficient
+            arrays["force_length_coefficient"][:n_muscles, start:end] = (
+                config.force_length_coefficient
+            )
 
         device = self.position_collection_device.device
         dtype = self._device_dtype
@@ -230,7 +231,7 @@ class MemoryBlockMuscleArmJax(MemoryBlockCosseratRodJax):
     ) -> dict[str, jax.Array]:
         updated = super().jax_compute_internal_forces_and_torques(state, time)
         muscle_forces, muscle_torques = _jax_compute_muscle_loads(
-            self._device_dtype.type(time),
+            self._device_dtype.type(np.asarray(time)),
             updated["radius"],
             updated["sigma"],
             updated["kappa"],

@@ -54,10 +54,13 @@ def _global_snake_count(
     snakes_per_rank_multiplier: int,
     mpi_size: int,
 ) -> int:
-    return _snakes_per_rank(
-        snakes_per_rank_exp=snakes_per_rank_exp,
-        snakes_per_rank_multiplier=snakes_per_rank_multiplier,
-    ) * mpi_size
+    return (
+        _snakes_per_rank(
+            snakes_per_rank_exp=snakes_per_rank_exp,
+            snakes_per_rank_multiplier=snakes_per_rank_multiplier,
+        )
+        * mpi_size
+    )
 
 
 def _mpi_worker_env(*, mpi_size: int) -> dict[str, str]:
@@ -493,7 +496,9 @@ def main(
     quiet: bool,
 ) -> None:
     assert steps > 0, "steps must be positive."
-    assert snakes_per_rank_multiplier > 0, "snakes_per_rank_multiplier must be positive."
+    assert snakes_per_rank_multiplier > 0, (
+        "snakes_per_rank_multiplier must be positive."
+    )
     if backend == "pyelastica":
         assert not vertical, "--vertical is only supported for JAX backends."
 

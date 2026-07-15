@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Literal, Sequence, Protocol
+from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
 
 import numpy as np
 
@@ -40,7 +40,6 @@ from .protocol import RodViewMetadata
 
 import jax
 import jax.numpy as jnp
-
 
 
 _NODE_ATTRS: tuple[str, ...] = (
@@ -435,7 +434,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         device_dtype: np.dtype,
         block_checkpoint: Path | str | None = None,
     ) -> None:
-        self._device_dtype = device_dtype
+        self._device_dtype = np.dtype(device_dtype)
         self._initial_device = device
         self.block_checkpoint_path = (
             Path(block_checkpoint) if block_checkpoint is not None else None

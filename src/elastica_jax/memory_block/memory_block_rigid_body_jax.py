@@ -16,7 +16,6 @@ from elastica.rigidbody.data_structures import _RigidRodSymplecticStepperMixin
 from elastica.typing import RigidBodyType, SystemIdxType
 
 
-
 _SCALAR_ATTRS: tuple[str, ...] = ("density", "volume", "mass")
 _VECTOR_ATTRS: tuple[str, ...] = (
     "position_collection",
@@ -285,9 +284,9 @@ class MemoryBlockRigidBodyJax(RigidBodyBase, _RigidRodSymplecticStepperMixin):
         elif value_type == "vector":
             view_shape = (3, self.n_elems)
         else:
-            assert (
-                value_type == "tensor"
-            ), "value_type must be one of 'scalar', 'vector', or 'tensor'."
+            assert value_type == "tensor", (
+                "value_type must be one of 'scalar', 'vector', or 'tensor'."
+            )
             view_shape = (3, 3, self.n_elems)
 
         for attr_name, row_idx in mapping_dict.items():

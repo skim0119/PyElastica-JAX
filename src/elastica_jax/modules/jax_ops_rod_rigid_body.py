@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from itertools import chain
 from typing import Any, Type
 
 import numpy as np
@@ -222,9 +221,9 @@ class _JAXRodRigidBodyOp:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        assert issubclass(
-            cls, NoRodRigidBodyJax
-        ), f"{cls} is not a valid mixed JAX operator. It must derive from NoRodRigidBodyJax."
+        assert issubclass(cls, NoRodRigidBodyJax), (
+            f"{cls} is not a valid mixed JAX operator. It must derive from NoRodRigidBodyJax."
+        )
         self._op_cls = cls
         self._args = args
         self._kwargs = kwargs

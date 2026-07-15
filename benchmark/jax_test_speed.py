@@ -281,7 +281,7 @@ def gpu_loop(
                 warmup_state = block.jax_zero_external_loads(warmup_state, warmup_time)
                 warmup_time += dt
             block.jax_set_state(warmup_state)
-            jax.block_until_ready(block.position_collection_device)
+            jax.block_until_ready(block)
 
         start = time.perf_counter()
         time_value = np.float64(0.0)
@@ -294,7 +294,8 @@ def gpu_loop(
             state = block.jax_zero_external_loads(state, time_value)
             time_value += dt
         block.jax_set_state(state)
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         elapsed = time.perf_counter() - start
 
         block.from_device(attrs=("position_collection", "velocity_collection"))
@@ -468,7 +469,7 @@ def gpu_full_rollout_loop(
             final_time=np.float64(n_steps * dt),
             dt=dt,
         )
-        jax.block_until_ready(warm_block.position_collection_device)
+        jax.block_until_ready(warm_block)
 
     timed_sim, timed_block = build_sim()
     start = time.perf_counter()
@@ -478,7 +479,7 @@ def gpu_full_rollout_loop(
         final_time=np.float64(n_steps * dt),
         dt=dt,
     )
-    jax.block_until_ready(timed_block.position_collection_device)
+    jax.block_until_ready(timed_block)
     return time.perf_counter() - start
 
 

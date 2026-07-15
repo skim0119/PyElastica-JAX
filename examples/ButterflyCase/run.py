@@ -84,7 +84,8 @@ def main(
     current_time = 0.0
 
     for frame_idx in tqdm(range(n_frames), desc="Butterfly rollout"):
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         block.from_device(update_rods=True)
         callback_data["time"].append(current_time)
         callback_data["position"].append(extract_positions(block))

@@ -96,12 +96,12 @@ def test_jax_rod2rod_op_updates_paired_rods() -> None:
         first_node = int(block.start_idx_in_rod_nodes[0])
         second_node = int(block.start_idx_in_rod_nodes[1])
 
-        assert np.isclose(
-            updated_state["external_forces"][0, first_node], 3.0
-        ), "Rod-to-rod op did not update the first rod as expected."
-        assert np.isclose(
-            updated_state["external_forces"][1, second_node], 6.0
-        ), "Rod-to-rod op did not update the second rod as expected."
+        assert np.isclose(updated_state["external_forces"][0, first_node], 3.0), (
+            "Rod-to-rod op did not update the first rod as expected."
+        )
+        assert np.isclose(updated_state["external_forces"][1, second_node], 6.0), (
+            "Rod-to-rod op did not update the second rod as expected."
+        )
 
 
 def test_jax_rod2rod_op_updates_paired_rods_across_blocks() -> None:
@@ -135,9 +135,9 @@ def test_jax_rod2rod_op_updates_paired_rods_across_blocks() -> None:
         first_node = int(body_block.start_idx_in_rod_nodes[0])
         second_node = int(muscle_block.start_idx_in_rod_nodes[0])
 
-        assert np.isclose(
-            updated_body_state["external_forces"][0, first_node], 3.0
-        ), "Cross-block rod-to-rod op did not update the first rod as expected."
+        assert np.isclose(updated_body_state["external_forces"][0, first_node], 3.0), (
+            "Cross-block rod-to-rod op did not update the first rod as expected."
+        )
         assert np.isclose(
             updated_muscle_state["external_forces"][1, second_node], 6.0
         ), "Cross-block rod-to-rod op did not update the second rod as expected."

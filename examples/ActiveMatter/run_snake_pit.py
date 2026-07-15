@@ -144,7 +144,8 @@ def run_simulation(
     start = time.perf_counter()
     current_time = 0.0
     for frame_idx in tqdm(range(n_frames), desc="Snake-pit rollout"):
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         stacked_positions = extract_stacked_positions(
             block, n_snakes=parameters.n_snakes
         )

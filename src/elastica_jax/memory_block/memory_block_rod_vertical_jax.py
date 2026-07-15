@@ -274,7 +274,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         device: jax.Device,
         device_dtype: np.dtype,
     ) -> None:
-        self._device_dtype = device_dtype
+        self._device_dtype = np.dtype(device_dtype)
         self._initial_device = device
 
     def __call__(

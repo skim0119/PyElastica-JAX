@@ -82,9 +82,7 @@ def export_scaling_plot(
 
     ax.set_xlabel("number of rods")
     ax.set_ylabel("rollout wall time (s)")
-    ax.set_title(
-        f"Rod-Rod contact scaling ({steps} steps, {n_elements} elements/rod)"
-    )
+    ax.set_title(f"Rod-Rod contact scaling ({steps} steps, {n_elements} elements/rod)")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend()
 

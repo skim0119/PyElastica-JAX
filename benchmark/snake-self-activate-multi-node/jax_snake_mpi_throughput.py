@@ -39,7 +39,11 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-from _jax_snake_common import mpi_global_snake_count, mpi_snakes_per_rank, run_jax_rollout_mpi
+from _jax_snake_common import (
+    mpi_global_snake_count,
+    mpi_snakes_per_rank,
+    run_jax_rollout_mpi,
+)
 
 
 def run(

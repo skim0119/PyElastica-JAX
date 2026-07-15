@@ -91,9 +91,9 @@ class _MpiCosseratRodBlock:
         return self
 
     def _require_inner_block(self) -> RodBlockProtocol:
-        assert (
-            self._inner_block is not None
-        ), "MPI rod block must be built during finalize() before use."
+        assert self._inner_block is not None, (
+            "MPI rod block must be built during finalize() before use."
+        )
         return self._inner_block
 
     def __getattr__(self, name: str) -> Any:

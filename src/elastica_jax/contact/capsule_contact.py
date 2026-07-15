@@ -11,7 +11,6 @@ import numpy as np
 from elastica_jax.block_operation import CommunicationScope, NoBlockOpJax
 from elastica_jax.contact.capsule_metadata import (
     CONTACT_STATE_CANDIDATE_MASK,
-    CONTACT_STATE_KEYS,
     CONTACT_STATE_LAST_DETECTION_TIME,
     CONTACT_STATE_PAIR_COUNT,
     CONTACT_STATE_PAIR_FIRST,

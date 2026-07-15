@@ -121,9 +121,7 @@ def initialize_capsule_contact_state(
         CONTACT_STATE_PAIR_SECOND: jax.device_put(
             np.full(max_pairs, -1, dtype=np.int32), device=device
         ),
-        CONTACT_STATE_PAIR_COUNT: jax.device_put(
-            np.int32(0), device=device
-        ),
+        CONTACT_STATE_PAIR_COUNT: jax.device_put(np.int32(0), device=device),
         CONTACT_STATE_CANDIDATE_MASK: jax.device_put(
             np.zeros(max_pairs, dtype=bool), device=device
         ),

@@ -51,9 +51,7 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
         second_metadata: JAXRodViewMetadata,
         operator: Any,
     ):
-        same_block = (
-            first_metadata.block_state_idx == second_metadata.block_state_idx
-        )
+        same_block = first_metadata.block_state_idx == second_metadata.block_state_idx
 
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             if same_block:
@@ -124,9 +122,9 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
                 second_system=self[jax_op.second_id()],
             )
             method = getattr(op_instance, "jax_operation", None)
-            assert (
-                method is not None
-            ), f"{type(op_instance)} does not define `jax_operation`."
+            assert method is not None, (
+                f"{type(op_instance)} does not define `jax_operation`."
+            )
             if getattr(type(op_instance), "jax_operation") is getattr(
                 NoRodRodBlockOpJax, "jax_operation"
             ):

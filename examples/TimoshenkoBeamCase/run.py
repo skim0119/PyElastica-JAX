@@ -79,7 +79,8 @@ def main(
     current_time = 0.0
 
     for frame_idx in tqdm(range(n_frames), desc="Timoshenko rollout"):
-        jax.block_until_ready(block.position_collection_device)
+        jax.block_until_ready(block)
+
         s_coords, deflection = extract_centerline(block)
         callback_data["time"].append(current_time)
         callback_data["centerline_s"].append(s_coords)
