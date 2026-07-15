@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Sequence, Protocol
 
 import numpy as np
@@ -432,9 +433,13 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         *,
         device: jax.Device,
         device_dtype: np.dtype,
+        block_checkpoint: Path | str | None = None,
     ) -> None:
         self._device_dtype = device_dtype
         self._initial_device = device
+        self.block_checkpoint_path = (
+            Path(block_checkpoint) if block_checkpoint is not None else None
+        )
 
     def __call__(
         self,
@@ -444,12 +449,8 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._systems = tuple(systems)
         self.n_systems = len(systems)
         self.ring_rod_flag = False
-        from elastica_jax.checkpoint.block_checkpoint import (
-            consume_block_checkpoint_shard,
-            is_block_checkpoint_load_pending,
-        )
-
-        self._pack_from_rods = not is_block_checkpoint_load_pending()
+        checkpoint_path = self.block_checkpoint_path
+        self._pack_from_rods = checkpoint_path is None or not checkpoint_path.is_file()
 
         system_straight_rod = []
         system_ring_rod = []
@@ -567,21 +568,28 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._device_dirty = False
         self._initialize_device_state(device=device)
         if not self._pack_from_rods:
-            checkpoint_shard = consume_block_checkpoint_shard()
-            assert checkpoint_shard is not None, (
-                "Block checkpoint loading was requested but no shard payload "
-                "was available during block construction."
-            )
-            checkpoint_path, shard_index = checkpoint_shard
             from elastica_jax.checkpoint.block_checkpoint import (
                 apply_block_checkpoint_to_memory_block,
             )
 
+            assert checkpoint_path is not None, (
+                "block_checkpoint_path must be set when loading a checkpoint."
+            )
             apply_block_checkpoint_to_memory_block(
                 self,
                 checkpoint_path,
-                shard_index=shard_index,
                 device=device,
+            )
+        elif checkpoint_path is not None:
+            from elastica_jax.checkpoint.block_checkpoint import (
+                infer_n_elements_per_rod,
+                save_block_checkpoint,
+            )
+
+            save_block_checkpoint(
+                self,
+                checkpoint_path,
+                n_elements_per_rod=infer_n_elements_per_rod(self),
             )
         return self
 
