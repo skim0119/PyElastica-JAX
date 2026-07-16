@@ -34,14 +34,6 @@ from elastica_jax.contact import (
     build_block_capsule_metadata,
     install_capsule_contact_state,
 )
-from elastica_jax.checkpoint import (
-    BlockCheckpointLayout,
-    apply_block_checkpoint_to_memory_block,
-    infer_n_elements_per_rod,
-    layout_rods_for_block,
-    read_block_checkpoint_layout,
-    save_block_checkpoint,
-    validate_block_checkpoint,
-)
+from elastica_jax.io import Hdf5IO, load, save
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 from elastica_jax.rod_rigid_body_operation import NoRodRigidBodyJax

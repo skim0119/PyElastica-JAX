@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
 
 import numpy as np
@@ -432,13 +431,9 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         *,
         device: jax.Device,
         device_dtype: np.dtype,
-        block_checkpoint: Path | str | None = None,
     ) -> None:
         self._device_dtype = np.dtype(device_dtype)
         self._initial_device = device
-        self.block_checkpoint_path = (
-            Path(block_checkpoint) if block_checkpoint is not None else None
-        )
 
     def __call__(
         self,
@@ -448,8 +443,6 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._systems = tuple(systems)
         self.n_systems = len(systems)
         self.ring_rod_flag = False
-        checkpoint_path = self.block_checkpoint_path
-        self._pack_from_rods = checkpoint_path is None or not checkpoint_path.is_file()
 
         system_straight_rod = []
         system_ring_rod = []
@@ -543,10 +536,9 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         _reset_scalar_ghost(self.rest_lengths, self.ghost_elems_idx, 1.0)
         _reset_scalar_ghost(self.rest_voronoi_lengths, self.ghost_voronoi_idx, 1.0)
 
-        if self._pack_from_rods:
-            _compute_sigma_kappa_for_blockstructure(self)
+        _compute_sigma_kappa_for_blockstructure(self)
 
-        if self._pack_from_rods and n_ring_rods != 0:
+        if n_ring_rods != 0:
             for system_to_be_added in system_ring_rod:
                 if np.count_nonzero(system_to_be_added.rest_sigma) == 0:
                     system_to_be_added.rest_sigma[:] = system_to_be_added.sigma[:]
@@ -566,30 +558,6 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._device_platform = device.platform
         self._device_dirty = False
         self._initialize_device_state(device=device)
-        if not self._pack_from_rods:
-            from elastica_jax.checkpoint.block_checkpoint import (
-                apply_block_checkpoint_to_memory_block,
-            )
-
-            assert checkpoint_path is not None, (
-                "block_checkpoint_path must be set when loading a checkpoint."
-            )
-            apply_block_checkpoint_to_memory_block(
-                self,
-                checkpoint_path,
-                device=device,
-            )
-        elif checkpoint_path is not None:
-            from elastica_jax.checkpoint.block_checkpoint import (
-                infer_n_elements_per_rod,
-                save_block_checkpoint,
-            )
-
-            save_block_checkpoint(
-                self,
-                checkpoint_path,
-                n_elements_per_rod=infer_n_elements_per_rod(self),
-            )
         return self
 
     def __hash__(self) -> int:
@@ -1127,6 +1095,31 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)
         self._device_dirty = True
+
+    @property
+    def hdf5_target_kind(self) -> str:
+        from elastica_jax.io.schema import TARGET_BLOCK
+
+        return TARGET_BLOCK
+
+    def write_hdf5_state(self, handle: object, *, schema_level: int) -> None:
+        """Write this block's device state into an open HDF5 file."""
+        from elastica_jax.io.block_state import write_block_file_state
+
+        write_block_file_state(self, handle, schema_level=schema_level)  # type: ignore[arg-type]
+
+    def read_hdf5_state(
+        self,
+        handle: object,
+        *,
+        schema_level: int,
+        check_device: bool = True,
+    ) -> None:
+        """Read this block's device state from an open HDF5 file."""
+        del schema_level
+        from elastica_jax.io.block_state import read_block_file_state
+
+        read_block_file_state(self, handle, check_device=check_device)  # type: ignore[arg-type]
 
     def tree_flatten(
         self,

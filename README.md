@@ -88,8 +88,7 @@ In `PyElastica`, data is collected by attaching `ea.Callback` to the system. In 
 > **_NOTE:_** This is key differnce between original PyElastica and PyElastica-JAX. The block rod (handled within the simulator during) is not always synchronized with the reference rods (created by user). This is to support multi-device and heterogeneous (GPU, CPU+GPU, etc.) execution more smoothly within JAX syntax pattern.
 > In detail, callback in PyElastica interrupt the integrate loop and collect data for I/O. Most of the time, due to large number of simulation steps, branch like `step % step_skip == 0` is used to collect data intermittently. This could be achieved using `jax.pure_callback` (probably) but it defeats the point of using JIT. Hence, collection is taken cared outside, closer to user's control.
 
-Here is the recommended way to collect data. The integration could be broken into chunks, at desirable frame rate.
-User can fetch the data from the block state, and copy. For example, the following snippet could be used to collect the position to create animation.
+Here is the recommended way to collect data. The integration could be broken into chunks, at desirable frame rate. Use `eaj.save` to write HDF5 frames. **Save/Load never call `from_device` / `to_device`**: a block Save reads device state; a rod Save reads host arrays as-is. Sync only when you intentionally want host rods updated.
 
 ```py
 current_time = 0.0
@@ -97,34 +96,23 @@ final_time = 10.0
 dt = 0.001
 fps = 25.0
 frame_dt = 1.0 / fps
-steps_per_frame = int(round(frame_dt / dt))
 n_frames = int(round(final_time / frame_dt)) + 1
 for frame_idx in tqdm(range(n_frames)):
     jax.block_until_ready(rod_block)
 
-    # Not recommended: access block memory directly. It may
-    # includes ghost elements that may not be intuitive unless
-    # user is aware of the block implementation details.
-    # Although it could be useful for more advanced use cases.
-    # shape would be (3, n_block_length)
-    position_collection = rod_block.position_collection.copy()
-
-    # Recommended: sync rod views from block to reference rods.
-    rod_block.from_device()
-    positions = []
-    for rod_view in rods:
-        positions.append(rod_view.position_collection.copy())
-    # shape would be (n_rods, 3, n_nodes)
-    position_collection = np.concatenate(positions, axis=0)
-
-    # I/O
-    save(
+    # Save block device state (includes ghosts). Schema level 0 keeps
+    # position_collection, director_collection, and radius.
+    eaj.save(
+        rod_block,
         f"results/frame_{frame_idx:06d}.h5",
-        position_collection,
         time=current_time,
         frame_idx=frame_idx,
-        n_workers=4,  # For very large case, it is recommended to parallelize I/O
+        verbose=0,
     )
+
+    # Optional: sync into user-held rods for host-side inspection.
+    # rod_block.from_device()
+    # eaj.save(rods[0], f"results/rod0_{frame_idx:06d}.h5", verbose=0)
 
     # Integrate
     chunk_final_time = current_time + frame_dt
@@ -136,6 +124,8 @@ for frame_idx in tqdm(range(n_frames)):
     )
     current_time = chunk_final_time
 ```
+
+Schema levels (`verbose`): `0` geometry/pose, `1` adds rates and strains, `10` full state (block/simulator files at level 10 are Load-safe for resume).
 
 > This part is actively under development for more flexible and better API. Leave issues if you have any suggestions or recommendations.
 
