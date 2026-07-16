@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections.abc import Sequence
 from typing import Any, Type
 
 import jax
@@ -10,6 +10,9 @@ import numpy as np
 
 from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
 from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
+from elastica_jax.memory_block.memory_block_rod_vertical_jax import (
+    _CosseratRodVerticalMemoryBlock,
+)
 from elastica_jax.memory_block.protocol import RodBlockProtocol
 
 DEFAULT_ROD_BLOCK_BACKEND = "cpu"
@@ -42,10 +45,9 @@ def _normalize_device_dtype(device_dtype: str | np.dtype) -> np.dtype:
 
 def configure_rod_block(
     *,
-    device: str | jax.Device = DEFAULT_ROD_BLOCK_BACKEND,
+    device: str | jax.Device | Sequence[jax.Device] = DEFAULT_ROD_BLOCK_BACKEND,
     device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
     inner_block_cls: Type[RodBlockProtocol] = _CosseratRodMemoryBlock,
-    block_checkpoint: Path | str | None = None,
 ) -> RodBlockProtocol:
     """
     Return a configured Cosserat rod block for ``enable_block_supports``.
@@ -55,18 +57,17 @@ def configure_rod_block(
     """
     if isinstance(device, str):
         device = resolve_backend_devices(device)[0]  # TODO: handle multiple devices
-    configure_kwargs: dict[str, Any] = {
-        "device": device,
-        "device_dtype": _normalize_device_dtype(device_dtype),
-    }
-    if block_checkpoint is not None:
-        assert inner_block_cls is _CosseratRodMemoryBlock, (
-            "block_checkpoint is currently supported only for the default "
-            "_CosseratRodMemoryBlock."
-        )
-        configure_kwargs["block_checkpoint"] = block_checkpoint
+    elif isinstance(device, Sequence):
+        device = tuple(device)
+        assert device, "configure_rod_block requires at least one device."
+        if len(device) > 1:
+            assert inner_block_cls is _CosseratRodVerticalMemoryBlock, (
+                "Multiple devices are currently supported only by "
+                "_CosseratRodVerticalMemoryBlock."
+            )
     return inner_block_cls(
-        **configure_kwargs,
+        device=device,
+        device_dtype=_normalize_device_dtype(device_dtype),
     )  # type: ignore[call-arg]
 
 

@@ -49,6 +49,8 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
 
 import jax
 import jax.numpy as jnp
+from jax import shard_map
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 
 class JAXRodStackedView:
@@ -256,7 +258,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     Parameters
     ----------
     device
-        JAX device that owns the packed state.
+        JAX device or tuple of devices that own the packed state.
     device_dtype
         ``float32`` or ``float64`` for host/device arrays.
 
@@ -271,11 +273,23 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def __init__(
         self,
         *,
-        device: jax.Device,
+        device: jax.Device | Sequence[jax.Device],
         device_dtype: np.dtype,
     ) -> None:
         self._device_dtype = np.dtype(device_dtype)
-        self._initial_device = device
+        if isinstance(device, Sequence) and not isinstance(device, (str, bytes)):
+            self._execution_devices = tuple(device)
+        else:
+            self._execution_devices = (device,)
+        assert self._execution_devices, (
+            "Vertical rod block requires at least one execution device."
+        )
+        self._initial_device = self._execution_devices[0]
+        self._mesh = (
+            Mesh(np.asarray(self._execution_devices, dtype=object), ("rod",))
+            if len(self._execution_devices) > 1
+            else None
+        )
 
     def __call__(
         self,
@@ -291,6 +305,11 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             "Vertical rod blocks require equal-length rods; "
             f"got n_elems={sorted(n_elems_values)}."
         )
+        if len(self._execution_devices) > 1:
+            assert len(systems) % len(self._execution_devices) == 0, (
+                "Distributed vertical rod blocks require the rod count to be "
+                "divisible by the number of devices."
+            )
 
         self._systems = tuple(systems)
         self.n_systems = len(systems)
@@ -321,10 +340,9 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self.dvdt_dwdt_collection = np.zeros((2, 0), dtype=self._device_dtype)
 
         self._device_state: dict[str, jax.Array] = {}
-        device = self._initial_device
-        self._device_platform = device.platform
+        self._device_platform = self._initial_device.platform
         self._device_dirty = False
-        self._initialize_device_state(device=device)
+        self._initialize_device_state(device=self._initial_device)
         return self
 
     def __hash__(self) -> int:
@@ -518,7 +536,12 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         target_device = device if device is not None else self._initial_device
         for attr in self._normalize_attr_names(attrs):
             host_array = np.asarray(getattr(self, attr), dtype=self._device_dtype)
-            self._device_state[attr] = jax.device_put(host_array, device=target_device)
+            if self._mesh is None:
+                self._device_state[attr] = jax.device_put(
+                    host_array, device=target_device
+                )
+            else:
+                self._device_state[attr] = self.device_put(host_array)
         self._device_platform = target_device.platform
         self._device_dirty = False
 
@@ -537,10 +560,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._pull_rod_state_to_block(sync_variables, system_indices)
         for variable in sync_variables:
             host_array = np.asarray(getattr(self, variable), dtype=self._device_dtype)
-            self._device_state[variable] = jax.device_put(
-                host_array,
-                device=self._initial_device,
-            )
+            self._device_state[variable] = self.device_put(host_array)
         self._device_dirty = False
 
     def from_device(
@@ -568,17 +588,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     @property
     def devices(self) -> tuple[jax.Device, ...]:
         """Return every device that owns part of this block's state."""
-        state_values = tuple(self._device_state.values())
-        assert state_values, (
-            "Device state must be initialized before accessing devices."
-        )
-        sample = state_values[0]
-        if hasattr(sample, "devices"):
-            return tuple(sample.devices())
-        assert hasattr(sample, "device"), (
-            "Device state leaves must expose either `devices()` or `device`."
-        )
-        return (sample.device,)
+        return self._execution_devices
 
     @property
     def device(self) -> jax.Device:
@@ -596,14 +606,47 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         return self._device_state
 
     def device_put(self, value: object) -> jax.Array:
-        """Place supported values on this block's execution device."""
+        """Place supported values on this block's execution device or sharding."""
         if isinstance(value, (float, np.floating)):
             value = self._device_dtype.type(value)
         else:
             dtype = getattr(value, "dtype", None)
             if dtype is not None and np.issubdtype(np.dtype(dtype), np.floating):
                 value = jnp.asarray(value, dtype=self._device_dtype)
-        return jax.device_put(value, device=self.device)
+        if self._mesh is None:
+            return jax.device_put(value, device=self.device)
+        ndim = getattr(value, "ndim", 0)
+        if ndim > 0 and getattr(value, "shape", (None,))[0] == self.n_rods:
+            sharding = NamedSharding(self._mesh, self._rod_partition_spec(ndim))
+        else:
+            sharding = NamedSharding(self._mesh, P())
+        return jax.device_put(value, sharding)
+
+    @staticmethod
+    def _rod_partition_spec(ndim: int) -> P:
+        return P("rod", *([None] * (ndim - 1)))
+
+    def _distributed_map(
+        self,
+        func,
+        *,
+        args: tuple[object, ...],
+        out_ndims: tuple[int, ...],
+    ):
+        assert self._mesh is not None, "Distributed map requires a multi-device mesh."
+        in_specs = tuple(
+            P() if getattr(arg, "ndim", 0) == 0 else self._rod_partition_spec(arg.ndim)
+            for arg in args
+        )
+        out_specs = tuple(self._rod_partition_spec(ndim) for ndim in out_ndims)
+        mapped = shard_map(
+            func,
+            mesh=self._mesh,
+            in_specs=in_specs,
+            out_specs=out_specs,
+            check_vma=False,
+        )
+        return mapped(*args)
 
     def jax_get_state(self) -> dict[str, jax.Array]:
         return dict(self._device_state)
@@ -611,6 +654,31 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)
         self._device_dirty = True
+
+    @property
+    def hdf5_target_kind(self) -> str:
+        from elastica_jax.io.schema import TARGET_BLOCK
+
+        return TARGET_BLOCK
+
+    def write_hdf5_state(self, handle: object, *, schema_level: int) -> None:
+        """Write this block's device state into an open HDF5 file."""
+        from elastica_jax.io.block_state import write_block_file_state
+
+        write_block_file_state(self, handle, schema_level=schema_level)  # type: ignore[arg-type]
+
+    def read_hdf5_state(
+        self,
+        handle: object,
+        *,
+        schema_level: int,
+        check_device: bool = True,
+    ) -> None:
+        """Read this block's device state from an open HDF5 file."""
+        del schema_level
+        from elastica_jax.io.block_state import read_block_file_state
+
+        read_block_file_state(self, handle, check_device=check_device)  # type: ignore[arg-type]
 
     def iterate_rods(self) -> Iterator[JAXRodStackedView]:
         """Yield a rod-local view of each stacked rod's device state."""
@@ -647,13 +715,27 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         time: np.float64,
         prefac: np.float64,
     ) -> dict[str, jax.Array]:
-        position_collection, director_collection = _jax_update_kinematics_vmap(
-            state["position_collection"],
-            state["director_collection"],
-            state["velocity_collection"],
-            state["omega_collection"],
-            jnp.asarray(prefac, dtype=self._device_dtype),
-        )
+        step_prefac = jnp.asarray(prefac, dtype=self._device_dtype)
+        if self._mesh is None:
+            position_collection, director_collection = _jax_update_kinematics_vmap(
+                state["position_collection"],
+                state["director_collection"],
+                state["velocity_collection"],
+                state["omega_collection"],
+                step_prefac,
+            )
+        else:
+            position_collection, director_collection = self._distributed_map(
+                _jax_update_kinematics_vmap,
+                args=(
+                    state["position_collection"],
+                    state["director_collection"],
+                    state["velocity_collection"],
+                    state["omega_collection"],
+                    step_prefac,
+                ),
+                out_ndims=(3, 4),
+            )
         updated = dict(state)
         updated["position_collection"] = position_collection
         updated["director_collection"] = director_collection
@@ -664,20 +746,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         state: dict[str, jax.Array],
         time: np.float64,
     ) -> dict[str, jax.Array]:
-        (
-            lengths,
-            tangents,
-            radius,
-            dilatation,
-            dilatation_rate,
-            voronoi_dilatation,
-            sigma,
-            kappa,
-            internal_stress,
-            internal_couple,
-            internal_forces,
-            internal_torques,
-        ) = _jax_compute_internal_forces_and_torques_vmap(
+        force_args = (
             state["position_collection"],
             state["velocity_collection"],
             state["volume"],
@@ -691,6 +760,40 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["bend_matrix"],
             state["rest_kappa"],
         )
+        if self._mesh is None:
+            (
+                lengths,
+                tangents,
+                radius,
+                dilatation,
+                dilatation_rate,
+                voronoi_dilatation,
+                sigma,
+                kappa,
+                internal_stress,
+                internal_couple,
+                internal_forces,
+                internal_torques,
+            ) = _jax_compute_internal_forces_and_torques_vmap(*force_args)
+        else:
+            (
+                lengths,
+                tangents,
+                radius,
+                dilatation,
+                dilatation_rate,
+                voronoi_dilatation,
+                sigma,
+                kappa,
+                internal_stress,
+                internal_couple,
+                internal_forces,
+                internal_torques,
+            ) = self._distributed_map(
+                _jax_compute_internal_forces_and_torques_vmap,
+                args=force_args,
+                out_ndims=(2, 3, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3),
+            )
         updated = dict(state)
         updated["lengths"] = lengths
         updated["tangents"] = tangents
@@ -712,7 +815,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         time: np.float64,
         dt: np.float64,
     ) -> dict[str, jax.Array]:
-        acceleration_collection, alpha_collection = _jax_update_accelerations_vmap(
+        acceleration_args = (
             state["internal_forces"],
             state["external_forces"],
             state["mass"],
@@ -721,13 +824,37 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             state["external_torques"],
             state["dilatation"],
         )
-        velocity_collection, omega_collection = _jax_update_dynamics_vmap(
-            state["velocity_collection"],
-            state["omega_collection"],
-            acceleration_collection,
-            alpha_collection,
-            jnp.asarray(dt, dtype=self._device_dtype),
-        )
+        if self._mesh is None:
+            acceleration_collection, alpha_collection = _jax_update_accelerations_vmap(
+                *acceleration_args
+            )
+        else:
+            acceleration_collection, alpha_collection = self._distributed_map(
+                _jax_update_accelerations_vmap,
+                args=acceleration_args,
+                out_ndims=(3, 3),
+            )
+        step_dt = jnp.asarray(dt, dtype=self._device_dtype)
+        if self._mesh is None:
+            velocity_collection, omega_collection = _jax_update_dynamics_vmap(
+                state["velocity_collection"],
+                state["omega_collection"],
+                acceleration_collection,
+                alpha_collection,
+                step_dt,
+            )
+        else:
+            velocity_collection, omega_collection = self._distributed_map(
+                _jax_update_dynamics_vmap,
+                args=(
+                    state["velocity_collection"],
+                    state["omega_collection"],
+                    acceleration_collection,
+                    alpha_collection,
+                    step_dt,
+                ),
+                out_ndims=(3, 3),
+            )
         updated = dict(state)
         updated["acceleration_collection"] = acceleration_collection
         updated["alpha_collection"] = alpha_collection
@@ -740,10 +867,17 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         state: dict[str, jax.Array],
         time: np.float64,
     ) -> dict[str, jax.Array]:
-        external_forces, external_torques = _jax_zero_external_loads_vmap(
-            state["external_forces"],
-            state["external_torques"],
-        )
+        if self._mesh is None:
+            external_forces, external_torques = _jax_zero_external_loads_vmap(
+                state["external_forces"],
+                state["external_torques"],
+            )
+        else:
+            external_forces, external_torques = self._distributed_map(
+                _jax_zero_external_loads_vmap,
+                args=(state["external_forces"], state["external_torques"]),
+                out_ndims=(3, 3),
+            )
         updated = dict(state)
         updated["external_forces"] = external_forces
         updated["external_torques"] = external_torques
