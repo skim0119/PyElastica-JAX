@@ -125,7 +125,7 @@ for frame_idx in tqdm(range(n_frames)):
     current_time = chunk_final_time
 ```
 
-Schema levels (`verbose`): `0` geometry/pose, `1` adds rates and strains, `10` full state (block/simulator files at level 10 are Load-safe for resume).
+Schema levels (`verbose`): `0` geometry/pose, `1` adds rates and strains, `10` full state (block/simulator files at level 10 are Load-safe for resume). For large block/simulator Saves, pass `n_workers>1` for chunked parallel writes. With an MPI `comm`, ranks barrier around Save/Load and only rank 0 writes a shared path.
 
 > This part is actively under development for more flexible and better API. Leave issues if you have any suggestions or recommendations.
 

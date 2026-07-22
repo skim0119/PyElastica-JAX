@@ -49,9 +49,18 @@ def write_array_group(
     group: h5py.Group,
     arrays: dict[str, np.ndarray],
 ) -> None:
-    """Create one dataset per array under ``group``."""
+    """Create one dataset per array under ``group`` and fill immediately."""
     for name, array in arrays.items():
         group.create_dataset(name, data=array)
+
+
+def create_empty_array_group(
+    group: h5py.Group,
+    arrays: dict[str, np.ndarray],
+) -> None:
+    """Create empty contiguous datasets matching ``arrays`` shapes."""
+    for name, array in arrays.items():
+        group.create_dataset(name, shape=array.shape, dtype=array.dtype)
 
 
 def read_array_group(
@@ -62,27 +71,58 @@ def read_array_group(
     return {name: np.asarray(group[name]) for name in field_names if name in group}
 
 
-def write_block_into(
-    parent: h5py.Group,
-    group_name: str,
+def collect_block_arrays(
     block: _RodBlockState,
     *,
     schema_level: int,
-) -> None:
-    """Write one block's device state (including ghosts) under ``parent``."""
+) -> dict[str, np.ndarray]:
+    """Return host copies of device collections selected by ``schema_level``."""
     field_names = fields_for_schema_level(schema_level)
     device_state = block.device_state
     arrays: dict[str, np.ndarray] = {}
     for name in field_names:
         assert name in device_state, f"Block device state is missing {name!r}."
         arrays[name] = np.asarray(device_state[name])
+    return arrays
+
+
+def write_block_group_metadata(
+    group: h5py.Group,
+    block: _RodBlockState,
+) -> None:
+    """Write block attrs (rod count, dtype, device metadata) onto ``group``."""
     platform, device_id = current_device_metadata(block)
-    group = parent.create_group(group_name)
     group.attrs["n_rods"] = int(block.n_rods)
     group.attrs["dtype"] = str(block.device_dtype)
     group.attrs["jax_platform"] = platform
     group.attrs["jax_device_id"] = device_id
-    write_array_group(group, arrays)
+
+
+def write_block_into(
+    parent: h5py.Group,
+    group_name: str,
+    block: _RodBlockState,
+    *,
+    schema_level: int,
+    fill_arrays: bool = True,
+) -> dict[str, np.ndarray]:
+    """Write one block's device state (including ghosts) under ``parent``.
+
+    Parameters
+    ----------
+    fill_arrays :
+        When True (default), datasets are created and filled. When False,
+        empty datasets are created and the host arrays are returned for a
+        later parallel fill.
+    """
+    arrays = collect_block_arrays(block, schema_level=schema_level)
+    group = parent.create_group(group_name)
+    write_block_group_metadata(group, block)
+    if fill_arrays:
+        write_array_group(group, arrays)
+    else:
+        create_empty_array_group(group, arrays)
+    return arrays
 
 
 def read_block_from(
