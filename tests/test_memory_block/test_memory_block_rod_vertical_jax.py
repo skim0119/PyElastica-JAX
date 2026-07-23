@@ -66,7 +66,7 @@ class _DummySimulator(BaseSystemCollection):
     pass
 
 
-class _DistributedVerticalSimulator(BaseSystemCollection, eaj.JAXOpsBlock):
+class _DistributedVerticalSimulator(eaj.Simulator):
     pass
 
 

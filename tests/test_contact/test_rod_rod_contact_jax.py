@@ -26,7 +26,7 @@ def _straight_rod(*, start: np.ndarray) -> ea.CosseratRod:
     )
 
 
-class _PairwiseContactSimulator(ea.BaseSystemCollection, eaj.JAXInteraction):
+class _PairwiseContactSimulator(eaj.Simulator):
     pass
 
 

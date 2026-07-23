@@ -28,7 +28,7 @@ class _MarkerRodRodOp(eaj.NoRodRodBlockOpJax):
         return rod_one_view, rod_two_view
 
 
-class _RodRodTestSimulator(ea.BaseSystemCollection, eaj.JAXInteraction):
+class _RodRodTestSimulator(eaj.Simulator):
     pass
 
 

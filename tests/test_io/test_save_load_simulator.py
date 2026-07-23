@@ -15,7 +15,7 @@ import elastica as ea  # noqa: E402
 import elastica_jax as eaj  # noqa: E402
 
 
-class _IoSimulator(ea.BaseSystemCollection, eaj.Hdf5IO):
+class _IoSimulator(eaj.Simulator):
     pass
 
 

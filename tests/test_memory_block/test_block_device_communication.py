@@ -10,10 +10,9 @@ jax.config.update("jax_enable_x64", True)
 
 import elastica as ea
 import elastica_jax as eaj
-from elastica.modules import BaseSystemCollection
 
 
-class _RodBlockSimulator(BaseSystemCollection, eaj.JAXOps):
+class _RodBlockSimulator(eaj.Simulator):
     pass
 
 
