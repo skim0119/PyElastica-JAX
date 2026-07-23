@@ -1,3 +1,4 @@
+from elastica_jax.simulator import Simulator
 from elastica_jax.modules.jax_ops import JAXOps
 from elastica_jax.modules.jax_ops_block import JAXOpsBlock
 from elastica_jax.modules.jax_ops_rod_rod_block import JAXInteraction
