@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Iterator, Protocol, Sequence, runtime_checkable
 
 import jax
 import numpy as np
@@ -33,7 +33,7 @@ class RodBlockProtocol(Protocol):
     def __init__(
         self,
         *,
-        device: jax.Device,
+        device: jax.Device | Sequence[jax.Device],
         device_dtype: np.dtype,
     ) -> None:
         """Configure device placement before systems are packed."""
