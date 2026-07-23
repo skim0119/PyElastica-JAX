@@ -1,28 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 JAXPyTree = Any
 JAXScalar = Any
 JAXStageTransform = Callable[[JAXPyTree, JAXScalar], JAXPyTree]
-
-
-@dataclass(frozen=True)
-class JAXBlockStages:
-    """Pure stage transforms for one independently executable block."""
-
-    constrain_values: tuple[JAXStageTransform, ...] = ()
-    synchronize: tuple[JAXStageTransform, ...] = ()
-    constrain_rates: tuple[JAXStageTransform, ...] = ()
-
-
-@dataclass(frozen=True)
-class JAXBlockExecution:
-    """Local stage transforms for one independently executable block."""
-
-    stages: JAXBlockStages
 
 
 class JAXBlock(Protocol):
@@ -80,10 +63,6 @@ class JAXSystems(Protocol):
     """
 
     def final_systems(self) -> Iterable[JAXBlock]: ...
-
-    def jax_independent_block_executions(
-        self,
-    ) -> tuple[JAXBlockExecution, ...] | None: ...
 
     def jax_constrain_values(
         self,
