@@ -10,7 +10,6 @@ jax.config.update("jax_enable_x64", True)
 
 import elastica as ea
 import elastica_jax as eaj
-from elastica.modules import BaseSystemCollection
 
 
 class _FakeComm:
@@ -30,7 +29,7 @@ class _FakeComm:
         return None
 
 
-class _RodBlockSimulator(BaseSystemCollection, eaj.JAXOpsBlock):
+class _RodBlockSimulator(eaj.Simulator):
     pass
 
 
@@ -97,7 +96,7 @@ def test_mpi_block_finalize_and_integrate_local_gravity() -> None:
 
 
 def test_mpi_vertical_block_is_stacked_and_integrates() -> None:
-    """MPI-wrapped vertical blocks must keep stacked layout through JAXOpsBlock."""
+    """MPI-wrapped vertical blocks must keep stacked layout through finalize."""
     from elastica_jax.modules.jax_ops_block import JAXOpsBlock
 
     comm = _FakeComm(rank=0, size=2)

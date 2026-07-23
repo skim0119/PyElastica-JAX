@@ -4,14 +4,8 @@ import pytest
 jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
-from elastica.modules import BaseSystemCollection
-from elastica_jax import JAXOps, NoOpsJax
-from elastica_jax.memory_block.block_factory import configure_rod_block
 from elastica.rod.cosserat_rod import CosseratRod
-
-
-class _DummySimulator(BaseSystemCollection, JAXOps):
-    pass
+from elastica_jax import NoOpsJax, Simulator, configure_rod_block
 
 
 class _AddGravityLikeLoad(NoOpsJax):
@@ -39,7 +33,7 @@ def _build_rod(n_elems: int = 8) -> CosseratRod:
 
 
 def test_jax_compatible_defaults_to_identity_transforms():
-    simulator = _DummySimulator()
+    simulator = Simulator()
     states = ({"value": 1.0}, {"value": 2.0})
 
     assert simulator.jax_constrain_values(states, np.float64(0.0)) == states
@@ -49,7 +43,7 @@ def test_jax_compatible_defaults_to_identity_transforms():
 
 def test_jax_ops_finalize_wraps_rod_view_into_stage_operator():
     with jax.default_device(jax.devices("cpu")[0]):
-        simulator = _DummySimulator()
+        simulator = Simulator()
         simulator.enable_block_supports(CosseratRod, configure_rod_block())
 
         rod = _build_rod()

@@ -153,7 +153,7 @@ def test_save_load_with_comm_root_roundtrip(tmp_path: Path) -> None:
     )
 
 
-class _Hdf5Simulator(ea.BaseSystemCollection, eaj.Hdf5IO):
+class _Hdf5Simulator(eaj.Simulator):
     pass
 
 

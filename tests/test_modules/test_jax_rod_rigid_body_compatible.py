@@ -4,18 +4,14 @@ import pytest
 jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
-from elastica import BaseSystemCollection, Sphere
+from elastica import Sphere
 from elastica.rod.cosserat_rod import CosseratRod
 from elastica_jax import (
-    JAXOpsRodRigidBody,
     MemoryBlockRigidBodyJax,
     NoRodRigidBodyJax,
+    Simulator,
     configure_rod_block,
 )
-
-
-class _DummySimulator(BaseSystemCollection, JAXOpsRodRigidBody):
-    pass
 
 
 class _CoupleRodAndRigidBody(NoRodRigidBodyJax):
@@ -54,7 +50,7 @@ def _build_sphere() -> Sphere:
 
 
 def test_jax_rod_rigid_body_compatible_defaults_to_identity_transforms():
-    simulator = _DummySimulator()
+    simulator = Simulator()
     states = ({"value": 1.0}, {"value": 2.0})
 
     assert simulator.jax_constrain_values(states, np.float64(0.0)) == states
@@ -64,7 +60,7 @@ def test_jax_rod_rigid_body_compatible_defaults_to_identity_transforms():
 
 def test_jax_rod_rigid_body_finalize_wraps_pair_views_into_stage_operator():
     with jax.default_device(jax.devices("cpu")[0]):
-        simulator = _DummySimulator()
+        simulator = Simulator()
         simulator.enable_block_supports(CosseratRod, configure_rod_block())
         simulator.enable_block_supports(Sphere, MemoryBlockRigidBodyJax)
 
