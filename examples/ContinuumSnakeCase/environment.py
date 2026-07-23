@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from run_continuum_snake_gpu import SnakeParameters
 
 
-class SnakeJAXSimulator(ea.BaseSystemCollection, eaj.JAXOps):
+class SnakeJAXSimulator(eaj.Simulator):
     """Device-side simulator collection for the reduced snake case."""
 
 

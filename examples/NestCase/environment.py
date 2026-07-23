@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 _SHEAR_CORRECTION = 4.0 / 3.0
 
 
-class NestSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class NestSimulator(eaj.Simulator):
     """System collection mixin for the JAX nest packing case."""
 
 

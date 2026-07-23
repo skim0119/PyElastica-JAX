@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 GRAVITY_AXIS = np.array([0.0, 0.0, 1.0])
 
 
-class SnakePitSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class SnakePitSimulator(eaj.Simulator):
     """System collection mixin for the JAX active-matter snake-pit case."""
 
 

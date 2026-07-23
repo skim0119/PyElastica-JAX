@@ -60,13 +60,11 @@ class ContactScalingConfig:
         return np.array([0.0, 0.0, 0.5 * self.rod_length], dtype=np.float64)
 
 
-class ContactScalingSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class ContactScalingSimulator(eaj.Simulator):
     """System collection for the rod-rod contact scaling benchmark."""
 
 
-class ContactScalingPairwiseSimulator(
-    ea.BaseSystemCollection, eaj.JAXOpsBlock, eaj.JAXInteraction
-):
+class ContactScalingPairwiseSimulator(eaj.Simulator):
     """JAX scaling benchmark using per-rod-pair ``RodRodContactJax`` operators."""
 
 

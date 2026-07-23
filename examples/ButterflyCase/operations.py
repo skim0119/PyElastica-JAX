@@ -88,7 +88,7 @@ def build_rod(parameters: ButterflyParameters) -> ea.CosseratRod:
     )
 
 
-class ButterflySimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class ButterflySimulator(eaj.Simulator):
     """Simulator collection for the free butterfly rod."""
 
 

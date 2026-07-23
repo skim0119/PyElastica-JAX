@@ -32,7 +32,7 @@ class AxialStretchingParameters:
         return self.youngs_modulus / (self.poisson_ratio + 1.0)
 
 
-class AxialStretchingSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class AxialStretchingSimulator(eaj.Simulator):
     """Simulator collection for the axial stretching case."""
 
 
