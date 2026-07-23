@@ -24,16 +24,12 @@ if TYPE_CHECKING:
 GRAVITY_AXIS = np.array([0.0, 0.0, 1.0])
 
 
-class SnakePitSimulator(eaj.Simulator):
-    """System collection mixin for the JAX active-matter snake-pit case."""
-
-
 def build_simulation(
     parameters: SnakePitParameters,
     *,
     device: jax.Device,
     seed: int,
-) -> tuple[SnakePitSimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the snake-pit simulator on the given device.
 
     Parameters
@@ -47,12 +43,12 @@ def build_simulation(
 
     Returns
     -------
-    tuple[SnakePitSimulator, elastica_jax._CosseratRodMemoryBlock]
+    tuple[eaj.Simulator, elastica_jax._CosseratRodMemoryBlock]
         The finalized simulator and its rod block.
     """
     wall_origins, wall_normals = parameters.pit_walls()
 
-    simulator = SnakePitSimulator()
+    simulator = eaj.Simulator()
     rod_block_cls = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 

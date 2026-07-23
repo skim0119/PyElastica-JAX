@@ -18,10 +18,6 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 
-class MuscleArmSimulator(eaj.Simulator):
-    pass
-
-
 def build_arm(n_elements: int, frequency: float) -> MuscleArm:
     arm = MuscleArm.straight_rod(
         n_elements,
@@ -70,7 +66,7 @@ def main() -> None:
     parser.add_argument("--frequency", type=float, default=2.0)
     args = parser.parse_args()
 
-    simulator = MuscleArmSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(
         MuscleArm, muscle_block_with(jax.devices("cpu")[0], "float64")
     )

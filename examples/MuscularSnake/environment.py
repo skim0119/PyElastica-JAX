@@ -41,16 +41,12 @@ _MUSCLE_BELLY_START_ELEM = 4 * 3
 _MUSCLE_BELLY_END_ELEM = 9 * 3
 
 
-class MuscularSnakeSimulator(eaj.Simulator):
-    """System collection for the JAX muscular snake case."""
-
-
 def build_simulation(
     parameters: MuscularSnakeParameters,
     *,
     device: str,
 ) -> tuple[
-    MuscularSnakeSimulator,
+    eaj.Simulator,
     eaj._CosseratRodMemoryBlock,
     eaj._CosseratRodMemoryBlock,
     list[ea.CosseratRod],
@@ -70,7 +66,7 @@ def build_simulation(
         The finalized simulator, body block, muscle block, and reference rods.
     """
     body_type, muscle_type = distinct_body_and_muscle_rod_types()
-    simulator = MuscularSnakeSimulator()
+    simulator = eaj.Simulator()
     body_block = eaj.configure_rod_block(device=device)
     muscle_block = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(body_type, body_block)
@@ -190,7 +186,7 @@ def _harden_tendon_regions(muscle_rod: ea.CosseratRod) -> None:
 
 
 def _register_block_operators(
-    simulator: MuscularSnakeSimulator,
+    simulator: eaj.Simulator,
     body_block: eaj._CosseratRodMemoryBlock,
     muscle_block: eaj._CosseratRodMemoryBlock,
     muscle_rods: list[ea.CosseratRod],
@@ -246,7 +242,7 @@ def _register_block_operators(
 
 
 def _register_muscle_connections(
-    simulator: MuscularSnakeSimulator,
+    simulator: eaj.Simulator,
     snake_body: ea.CosseratRod,
     muscle_rods: list[ea.CosseratRod],
     muscle_end_connection_index: list[int],

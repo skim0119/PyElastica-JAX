@@ -10,7 +10,7 @@ capsule-half-space wall contact.
 ```
 ActiveMatter/
 ├── run_snake_pit.py      # entry point: config + rollout + HDF5 frame dump
-├── environment.py        # SnakePitSimulator mixin + build_simulation + packing
+├── environment.py        # build_simulation + packing
 ├── post_processing.py    # MPI-parallel renderer (data/ -> render/)
 ├── frame_io.py           # HDF5 frame I/O and output-path layout
 ├── operators/            # custom JAX operators (traveling-wave forcing)

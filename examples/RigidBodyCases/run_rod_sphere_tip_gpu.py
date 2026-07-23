@@ -32,10 +32,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime-only guard
 jax_config.update("jax_enable_x64", True)
 
 
-class RodSphereTipJAXSimulator(eaj.Simulator):
-    pass
-
-
 class _ConfiguredRodMemoryBlock(ea.MemoryBlockCosseratRodJax):
     device_dtype = np.dtype(np.float64)
     device = None
@@ -222,7 +218,7 @@ def build_simulator(
     joint_damping: float,
     gravity: np.ndarray,
 ) -> tuple[
-    RodSphereTipJAXSimulator,
+    eaj.Simulator,
     ea.MemoryBlockCosseratRodJax,
     ea.MemoryBlockRigidBodyJax,
     ea.CosseratRod,
@@ -231,7 +227,7 @@ def build_simulator(
     _ConfiguredRodMemoryBlock.device = device
     _ConfiguredRigidBodyMemoryBlock.device = device
 
-    simulator = RodSphereTipJAXSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, _ConfiguredRodMemoryBlock)
     simulator.enable_block_supports(ea.Sphere, _ConfiguredRigidBodyMemoryBlock)
 

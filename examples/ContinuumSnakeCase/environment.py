@@ -1,9 +1,9 @@
 """Simulator construction for the reduced continuum snake GPU validation case.
 
-This module holds the simulator mixin definitions and the ``build_simulation`` /
-``build_reference_simulation`` factories shared by the run script. The JAX
-simulation and the host-side PyElastica reference are built from the same
-:class:`SnakeParameters` so their final states can be compared.
+This module holds ``build_simulation`` / ``build_reference_simulation`` factories
+shared by the run script. The JAX simulation and the host-side PyElastica
+reference are built from the same :class:`SnakeParameters` so their final states
+can be compared.
 """
 
 from __future__ import annotations
@@ -32,10 +32,6 @@ if TYPE_CHECKING:
     from run_continuum_snake_gpu import SnakeParameters
 
 
-class SnakeJAXSimulator(eaj.Simulator):
-    """Device-side simulator collection for the reduced snake case."""
-
-
 class SnakeReferenceSimulator(
     ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Contact
 ):
@@ -61,7 +57,7 @@ def build_simulation(
     parameters: SnakeParameters,
     *,
     device: jax.Device | str,
-) -> tuple[SnakeJAXSimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the JAX snake simulator.
 
     Parameters
@@ -73,12 +69,12 @@ def build_simulation(
 
     Returns
     -------
-    tuple[SnakeJAXSimulator, elastica_jax._CosseratRodMemoryBlock]
+    tuple[eaj.Simulator, elastica_jax._CosseratRodMemoryBlock]
         The finalized simulator and its single rod memory block.
     """
     rod_block = eaj.configure_rod_block(device=device or "cpu")
 
-    simulator = SnakeJAXSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     rod = build_rod(parameters)
     simulator.append(rod)

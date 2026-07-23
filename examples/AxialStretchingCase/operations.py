@@ -32,17 +32,13 @@ class AxialStretchingParameters:
         return self.youngs_modulus / (self.poisson_ratio + 1.0)
 
 
-class AxialStretchingSimulator(eaj.Simulator):
-    """Simulator collection for the axial stretching case."""
-
-
 def build_simulator(
     parameters: AxialStretchingParameters,
     *,
     backend: str,
-) -> tuple[AxialStretchingSimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the axial stretching simulator."""
-    simulator = AxialStretchingSimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 

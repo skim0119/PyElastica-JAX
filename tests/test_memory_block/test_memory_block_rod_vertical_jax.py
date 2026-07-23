@@ -66,10 +66,6 @@ class _DummySimulator(BaseSystemCollection):
     pass
 
 
-class _DistributedVerticalSimulator(eaj.Simulator):
-    pass
-
-
 def test_vertical_block_stacks_on_leading_axis() -> None:
     rods = [_build_rod(8, seed=0), _build_rod(8, seed=1), _build_rod(8, seed=2)]
     block = _make_vertical_block(rods)
@@ -192,7 +188,7 @@ def test_distributed_vertical_block_integrates_with_position_verlet() -> None:
     if len(devices) < 2:
         pytest.skip("requires at least two CPU devices")
 
-    simulator = _DistributedVerticalSimulator()
+    simulator = eaj.Simulator()
     rod_block = configure_rod_block(
         device=devices,
         device_dtype=np.float64,

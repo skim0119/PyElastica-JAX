@@ -13,10 +13,6 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 
-class CantileverSimulator(eaj.Simulator):
-    pass
-
-
 def main(
     final_time: float = 100.0, time_step: float = 1.0e-4, show: bool = False
 ) -> None:
@@ -32,7 +28,7 @@ def main(
     )
     initial_position = rod.position_collection.copy()
 
-    simulator = CantileverSimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     simulator.append(rod)

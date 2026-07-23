@@ -48,17 +48,13 @@ class TimoshenkoParameters:
         return np.array([self.end_force_x, 0.0, 0.0], dtype=np.float64)
 
 
-class TimoshenkoSimulator(eaj.Simulator):
-    """Simulator collection for the Timoshenko beam case."""
-
-
 def build_simulator(
     parameters: TimoshenkoParameters,
     *,
     backend: str,
-) -> tuple[TimoshenkoSimulator, eaj._CosseratRodMemoryBlock, ea.CosseratRod]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock, ea.CosseratRod]:
     """Build and finalize the Timoshenko beam simulator."""
-    simulator = TimoshenkoSimulator()
+    simulator = eaj.Simulator()
     rod_block_cls = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
 
