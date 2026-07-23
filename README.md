@@ -42,13 +42,7 @@ import jax.numpy as jnp
 import elastica as ea
 import elastica_jax as eaj
 
-class JAXSimulator(
-    ea.BaseSystemCollection,  # From PyElastica
-    eaj.JAXOps
-):
-    pass
-
-simulator = JAXSimulator()
+simulator = eaj.Simulator()
 rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(  # <-- assign the JAX block for CosseratRod
     ea.CosseratRod,
@@ -135,13 +129,10 @@ In `PyElastica`, operations could be inserted using modules such as `ea.Forcing`
 
 `PyElastica-JAX` follows the same concepts and philosophy, but with some simplification and changes according to `JAX`'s pure function pattern. This gives better optimization and amortized compilation for entire JIT timestepping loop.
 
-In `PyElastica-JAX`, adding rod-wise operation is done with mixin module `eaj.JAXOps` into simulator class. This gives ability to run `operate` method to add operation to a specific system.
+Use `eaj.Simulator` for the system collection. It always exposes rod-wise `operate`, block-wise `operate_block`, pairwise registration, and Save/Load — unused paths simply register nothing. Classic PyElastica modules (`ea.Forcing`, `ea.Constraints`, …) are not included; keep those on a separate CPU collection when validating against PyElastica.
 
 ```py
-class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOps):
-    pass
-
-simulator = JAXSimulator()
+simulator = eaj.Simulator()
 rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -238,13 +229,10 @@ the hood it is also batched across rods.
 > When using block operation with spanwise equation, carefully treat the ghost ghost elements and their behavior. Ghost padding is only to separate the numerics to be isolated within the rod, but does not have any safety to keep those values zeros. <TODO: add more details in documentation>
 > __block__ operation will be deprecated.
 
-To use block operation, add the `eaj.JAXOpsBlock` mixin and register with `operate_block`:
+Register block operations with `operate_block` on `eaj.Simulator`:
 
 ```py
-class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
-    pass
-
-simulator = JAXSimulator()
+simulator = eaj.Simulator()
 rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -326,12 +314,12 @@ simulator.operate_block(rod_block).using(
 
 > Work-in-progress.
 
-Register pair operators with ``JAXInteraction``. Each operator receives rod-local
-views through ``jax_operation`` and may update one or both rods:
+Register pair operators with ``pairwise_interaction`` on ``eaj.Simulator``.
+Each operator receives rod-local views through ``jax_operation`` and may update
+one or both rods:
 
 ```py
-class Simulator(ea.BaseSystemCollection, eaj.JAXInteraction):
-    ...
+simulator = eaj.Simulator()
 
 
 class Repell(eaj.NoRodRodBlockOpJax):
@@ -470,14 +458,7 @@ import elastica_jax as eaj
 jax.config.update("jax_enable_x64", True)
 
 
-class CantileverSimulator(
-    ea.BaseSystemCollection,
-    eaj.JAXOpsBlock
-):
-    pass
-
-
-simulator = CantileverSimulator()
+simulator = eaj.Simulator()
 rod_block = eaj.configure_rod_block_mpi(comm=comm)
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -531,5 +512,6 @@ This repository expand the usage of `block` concept directly, along with `JAX`'s
 
 ## Features that are extended from PyElastica
 
+- `eaj.Simulator` includes all
 - `configure_rod_block(..., inner_block_cls=eaj._CosseratRodVerticalMemoryBlock)`:
   use the stacked-axis rod block for equal-length straight rods.

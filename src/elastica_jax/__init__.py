@@ -1,9 +1,4 @@
 from elastica_jax.simulator import Simulator
-from elastica_jax.modules.jax_ops import JAXOps
-from elastica_jax.modules.jax_ops_block import JAXOpsBlock
-from elastica_jax.modules.jax_ops_rod_rod_block import JAXInteraction
-from elastica_jax.modules.jax_ops_rod_rigid_body import JAXOpsRodRigidBody
-
 from elastica_jax.timestepper.jax_steppers import PositionVerletJAX
 from elastica_jax.memory_block.memory_block_rigid_body_jax import (
     MemoryBlockRigidBodyJax,
@@ -38,6 +33,6 @@ from elastica_jax.contact import (
     build_block_capsule_metadata,
     install_capsule_contact_state,
 )
-from elastica_jax.io import Hdf5IO, load, save
+from elastica_jax.io import load, save
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 from elastica_jax.rod_rigid_body_operation import NoRodRigidBodyJax
