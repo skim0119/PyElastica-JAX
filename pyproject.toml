@@ -22,11 +22,6 @@ classifiers = [
 
 requires-python = ">=3.11"
 
-[project.urls]
-Repository = "https://github.com/skim0119/PyElastica-JAX"
-Homepage = "https://www.cosseratrods.org/"
-Documentation = "https://docs.cosseratrods.org/en/latest/"
-
 dependencies = [
     "pyelastica",
     "tqdm",
@@ -36,6 +31,12 @@ dependencies = [
     "mpi4py",
     "mpi4jax",
 ]
+
+[project.urls]
+Repository = "https://github.com/skim0119/PyElastica-JAX"
+Homepage = "https://www.cosseratrods.org/"
+Documentation = "https://docs.cosseratrods.org/en/latest/"
+
 
 [tool.uv]
 no-binary-package = ["h5py", "mpi4py"]
