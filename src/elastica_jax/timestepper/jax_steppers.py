@@ -56,7 +56,9 @@ class PositionVerletJAX:
             Finalized simulator exposing JAX block and stage transforms.
             When ``use_independent_block_rollout=True``, the collection must
             expose block-local execution metadata and must not register coupled
-            synchronize operators across finalized blocks.
+            synchronize operators across finalized blocks. If it cannot, this
+            method raises ``AssertionError`` instead of falling back to the
+            collection-level rollout.
         time
             Current simulation time.
         final_time
@@ -88,31 +90,36 @@ class PositionVerletJAX:
         states = tuple(system.jax_get_state() for system in systems)
 
         if self.use_independent_block_rollout:
-            independent_executions = system_collection.jax_independent_block_executions()
-            if independent_executions is not None:
-                assert len(independent_executions) == len(systems), (
-                    "Independent block execution metadata must match finalized systems."
+            independent_executions = (
+                system_collection.jax_independent_block_executions()
+            )
+            assert independent_executions is not None, (
+                "Independent block rollout was requested, but the collection "
+                "exposes coupled stage operators and cannot run per-block loops."
+            )
+            assert len(independent_executions) == len(systems), (
+                "Independent block execution metadata must match finalized systems."
+            )
+            final_times: list[jax.Array] = []
+            final_states: list[JAXPyTree] = []
+            for system, state, execution in zip(
+                systems, states, independent_executions, strict=True
+            ):
+                block_time, updated_state = self._run_compiled_block(
+                    system=system,
+                    state=state,
+                    stages=execution.stages,
+                    n_steps=n_steps,
+                    simulation_time=simulation_time,
+                    simulation_dt=simulation_dt,
                 )
-                final_times: list[jax.Array] = []
-                final_states: list[JAXPyTree] = []
-                for system, state, execution in zip(
-                    systems, states, independent_executions, strict=True
-                ):
-                    block_time, updated_state = self._run_compiled_block(
-                        system=system,
-                        state=state,
-                        stages=execution.stages,
-                        n_steps=n_steps,
-                        simulation_time=simulation_time,
-                        simulation_dt=simulation_dt,
-                    )
-                    final_times.append(block_time)
-                    final_states.append(updated_state)
-                assert final_times, "At least one JAX block is required for integration."
-                final_time_jax = final_times[0]
-                for system, state in zip(systems, final_states, strict=True):
-                    system.jax_set_state(state)
-                return float(final_time_jax)
+                final_times.append(block_time)
+                final_states.append(updated_state)
+            assert final_times, "At least one JAX block is required for integration."
+            final_time_jax = final_times[0]
+            for system, state in zip(systems, final_states, strict=True):
+                system.jax_set_state(state)
+            return float(final_time_jax)
 
         compiled_rollout = self._get_compiled_rollout(
             system_collection=system_collection,
