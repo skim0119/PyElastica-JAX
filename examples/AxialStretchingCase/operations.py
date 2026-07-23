@@ -43,8 +43,8 @@ def build_simulator(
 ) -> tuple[AxialStretchingSimulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the axial stretching simulator."""
     simulator = AxialStretchingSimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend)
-    simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
+    rod_block = eaj.configure_rod_block(device=backend)
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
     rod = ea.CosseratRod.straight_rod(
         parameters.n_elem,
@@ -60,21 +60,20 @@ def build_simulator(
     simulator.append(rod)
 
     end_force = np.array([parameters.end_force_x, 0.0, 0.0], dtype=np.float64)
-    simulator.operate_block(rod_block_cls).using(eaj.OneEndFixedJax)
-    simulator.operate_block(rod_block_cls).using(
+    simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
+    simulator.operate_block(rod_block).using(
         eaj.EndpointForcesJax,
         0.0 * end_force,
         end_force,
         ramp_up_time=1.0e-2,
     )
-    simulator.operate_block(rod_block_cls).using(
+    simulator.operate_block(rod_block).using(
         eaj.AnalyticalLinearDamperJax,
         time_step=np.float64(parameters.time_step),
         damping_constant=parameters.damping_constant,
     )
     simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    return simulator, block
+    return simulator, rod_block
 
 
 def extract_centerline(

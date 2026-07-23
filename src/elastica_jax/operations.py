@@ -15,12 +15,13 @@ JAXVectorArray: TypeAlias = np.ndarray
 JAXScalarArray: TypeAlias = np.ndarray
 
 
-class _RodSystemLike(Protocol):
-    """Minimal rod/block surface needed by JAX constraint and damper constructors."""
+class RodSystemLike(Protocol):
+    """Minimal rod/block surface needed by JAX operator constructors."""
 
     position_collection: Any
     director_collection: Any
     mass: Any
+    rest_lengths: Any
     ring_rod_flag: bool
     inv_mass_second_moment_of_inertia: Any
 
@@ -65,7 +66,7 @@ class NoOpsJax:
 class OneEndFixedJax(NoOpsJax):
     """JAX equivalent of fixing the first node and first director."""
 
-    def __init__(self, *, _system: _RodSystemLike) -> None:
+    def __init__(self, *, _system: RodSystemLike) -> None:
         self.fixed_position_collection: JAXVectorArray = _system.position_collection[
             ..., 0
         ].copy()
@@ -108,10 +109,8 @@ class EndpointForcesJax(NoOpsJax):
         start_force: JAXVectorArray,
         end_force: JAXVectorArray,
         ramp_up_time: float,
-        *,
-        _system: _RodSystemLike,
+        **kwargs: object,
     ) -> None:
-        del _system
         assert ramp_up_time > 0.0, "ramp_up_time must be positive."
         self.start_force = start_force
         self.end_force = end_force
@@ -146,9 +145,8 @@ class GravityForcesJax(NoOpsJax):
         self,
         *,
         acc_gravity: JAXVectorArray | None = None,
-        _system: _RodSystemLike | None = None,
+        **kwargs: object,
     ) -> None:
-        del _system
         if acc_gravity is None:
             acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
         self.acc_gravity = acc_gravity
@@ -175,7 +173,7 @@ class AnalyticalLinearDamperJax(NoOpsJax):
             "translational_damping_constant", None
         )
         rotational_damping_constant = kwargs.get("rotational_damping_constant", None)
-        system: _RodSystemLike = kwargs["_system"]
+        system: RodSystemLike = kwargs["_system"]
 
         provided_params = [
             p

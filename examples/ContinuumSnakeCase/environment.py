@@ -106,8 +106,7 @@ def build_simulation(
         damping_constant=parameters.damping_constant,
     )
     simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    return simulator, block
+    return simulator, rod_block
 
 
 def build_reference_simulation(

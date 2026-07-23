@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, Literal, Sequence
+from typing import Any, Callable, Iterable, Iterator, Literal, Sequence, TypeAlias
 
 import numpy as np
 
@@ -80,7 +80,7 @@ _VORONOI_ATTRS: tuple[str, ...] = (
 )
 _SYNCABLE_ATTRS: tuple[str, ...] = _NODE_ATTRS + _ELEMENT_ATTRS + _VORONOI_ATTRS
 
-RodSyncTarget = RodType | Sequence[RodType] | Literal["all"]
+RodSyncTarget: TypeAlias = RodType | Sequence[RodType] | Literal["all"]
 
 
 @dataclass(frozen=True)

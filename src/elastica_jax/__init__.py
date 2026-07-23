@@ -18,13 +18,16 @@ from elastica_jax.memory_block.block_factory import (
     resolve_backend_devices,
 )
 from elastica_jax.operations import (
+    JAXTime,
     NoOpsJax,
     OneEndFixedJax,
     EndpointForcesJax,
     GravityForcesJax,
     AnalyticalLinearDamperJax,
     GravityAnalyticalDamperJax,
+    RodSystemLike,
 )
+from elastica_jax.memory_block.memory_block_rod_jax import JAXRodView
 from elastica_jax.block_operation import CommunicationScope, NoBlockOpJax
 from elastica_jax.contact import (
     BlockCapsuleMetadata,

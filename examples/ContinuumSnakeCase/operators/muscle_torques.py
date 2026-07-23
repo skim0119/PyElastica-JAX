@@ -7,8 +7,8 @@ import numpy as np
 import elastica as ea
 import elastica_jax as eaj
 from elastica_jax._linalg import _jax_batch_matvec as _batch_matvec
+from elastica_jax.typing import Array, ArrayLike
 
-import jax
 import jax.numpy as jnp
 
 
@@ -22,7 +22,7 @@ class SnakeMuscleTorquesJax(eaj.NoOpsJax):
         period: float,
         base_length: float,
         gravitational_acc: float,
-        _system,
+        _system: eaj.RodSystemLike,
     ) -> None:
         torque_template = ea.MuscleTorques(
             base_length=base_length,
@@ -35,16 +35,20 @@ class SnakeMuscleTorquesJax(eaj.NoOpsJax):
             ramp_up_time=period,
             with_spline=True,
         )
-        self.gravity = np.array([0.0, gravitational_acc, 0.0], dtype=np.float64)
-        self.muscle_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-        self.muscle_s = torque_template.s
-        self.muscle_spline = torque_template.my_spline
+        self.gravity = jnp.asarray([0.0, gravitational_acc, 0.0])
+        self.muscle_direction = jnp.asarray([0.0, 1.0, 0.0])
+        self.muscle_s = jnp.asarray(torque_template.s)
+        self.muscle_spline = jnp.asarray(torque_template.my_spline)
         self.muscle_angular_frequency = 2.0 * np.pi / period
         self.muscle_wave_number = 2.0 * np.pi / float(b_coeff[-1])
         self.muscle_phase_shift = 0.0
         self.muscle_ramp_up_time = period
 
-    def jax_operate_synchronize(self, rod_view, time):
+    def jax_operate_synchronize(
+        self,
+        rod_view: eaj.JAXRodView,
+        time: eaj.JAXTime,
+    ) -> eaj.JAXRodView:
         external_forces, external_torques = _apply_gravity_and_muscle_torques(
             time_value=time,
             director_collection=rod_view.director_collection,
@@ -65,18 +69,18 @@ class SnakeMuscleTorquesJax(eaj.NoOpsJax):
 
 def _apply_gravity_and_muscle_torques(
     *,
-    time_value: jax.Array,
-    director_collection: jax.Array,
-    mass: jax.Array,
-    gravity: jax.Array,
-    muscle_direction: jax.Array,
-    muscle_s: jax.Array,
-    muscle_spline: jax.Array,
-    muscle_angular_frequency: jax.Array,
-    muscle_wave_number: jax.Array,
-    muscle_phase_shift: jax.Array,
-    muscle_ramp_up_time: jax.Array,
-) -> tuple[jax.Array, jax.Array]:
+    time_value: ArrayLike,
+    director_collection: Array,
+    mass: Array,
+    gravity: Array,
+    muscle_direction: Array,
+    muscle_s: Array,
+    muscle_spline: Array,
+    muscle_angular_frequency: float,
+    muscle_wave_number: float,
+    muscle_phase_shift: float,
+    muscle_ramp_up_time: float,
+) -> tuple[Array, Array]:
     """Return nodal external forces and torques from gravity and muscle actuation.
 
     The muscle torque magnitude follows the travelling-wave spline used by
@@ -105,7 +109,7 @@ def _apply_gravity_and_muscle_torques(
 
     Returns
     -------
-    tuple[jax.Array, jax.Array]
+    tuple[Array, Array]
         Nodal external forces ``(3, n_nodes)`` and torques ``(3, n_elem)``.
     """
     external_forces = gravity[:, None] * mass[None, :]

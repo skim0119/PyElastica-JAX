@@ -50,10 +50,11 @@ entry point, but also lets you configure the block up front and read the built b
 back without scanning `final_systems()`.
 
 Configure with ``configure_rod_block``, pass the returned block instance to
-``enable_block_supports``, and use that same instance after ``finalize()``:
+PyElastica's ``enable_block_supports``, and use that same instance after
+``finalize()``:
 
 ```python
-class JAXSimulator(ea.BaseSystemCollection):
+class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
     pass
 
 simulator = JAXSimulator()
@@ -68,6 +69,10 @@ simulator.finalize()
 # rod_block is now the built block
 assert rod_block.n_rods == n_rods
 ```
+
+Elastica types ``enable_block_supports`` for block *classes*; configured JAX
+blocks are *instances* that finalize invokes via ``__call__``. Mypy follows
+elastica with ``follow_imports = skip`` so this call site stays clean.
 
 Once the block is built, it owns contiguous device memory for rod state. Original rod
 values are no longer synchronized with that memory automatically.
@@ -154,6 +159,8 @@ This is a deliberate restriction of the current implementation, not a bug.
 Host-side load classes remain valid for CPU simulations, but they are not lowered into
 JAX automatically. To participate in device rollout, implement a JAX operator by
 subclassing `eaj.NoOpsJax` (rod-local) or `eaj.NoBlockOpJax` (block-level).
+Annotate constructors with `eaj.RodSystemLike` and stage methods with
+`eaj.JAXRodView` / `eaj.JAXTime` — all exported from `elastica_jax`.
 
 Built-in examples live in [`src/elastica_jax/operations.py`](../src/elastica_jax/operations.py).
 
