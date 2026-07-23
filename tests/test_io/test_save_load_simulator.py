@@ -15,10 +15,6 @@ import elastica as ea  # noqa: E402
 import elastica_jax as eaj  # noqa: E402
 
 
-class _IoSimulator(eaj.Simulator):
-    pass
-
-
 def _layout_rods(*, n_rods: int, n_elements: int, length: float = 0.4) -> list:
     spacing = 2.0 * length
     rods = []
@@ -40,8 +36,8 @@ def _layout_rods(*, n_rods: int, n_elements: int, length: float = 0.4) -> list:
     return rods
 
 
-def _finalize_simulator() -> tuple[_IoSimulator, eaj._CosseratRodMemoryBlock]:
-    simulator = _IoSimulator()
+def _finalize_simulator() -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(
         device=jax.devices("cpu")[0],
         device_dtype=np.float64,

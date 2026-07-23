@@ -12,10 +12,6 @@ import elastica as ea
 import elastica_jax as eaj
 
 
-class _RodBlockSimulator(eaj.Simulator):
-    pass
-
-
 def _build_rod(*, n_elements: int = 8) -> ea.CosseratRod:
     return ea.CosseratRod.straight_rod(
         n_elements=n_elements,
@@ -31,8 +27,8 @@ def _build_rod(*, n_elements: int = 8) -> ea.CosseratRod:
 
 def _build_simulator_with_block(
     rods: list[ea.CosseratRod],
-) -> tuple[_RodBlockSimulator, eaj._CosseratRodMemoryBlock]:
-    simulator = _RodBlockSimulator()
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     for rod in rods:

@@ -29,10 +29,6 @@ class _FakeComm:
         return None
 
 
-class _RodBlockSimulator(eaj.Simulator):
-    pass
-
-
 def _build_rod(*, n_elements: int = 8) -> ea.CosseratRod:
     return ea.CosseratRod.straight_rod(
         n_elements=n_elements,
@@ -61,7 +57,7 @@ def test_configure_rod_block_mpi_owns_rod_round_robin() -> None:
 def test_mpi_block_finalize_and_integrate_local_gravity() -> None:
     comm = _FakeComm(rank=0, size=2)
     rod_block = eaj.configure_rod_block_mpi(comm=comm)
-    simulator = _RodBlockSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
     n_rods_total = 4
@@ -106,7 +102,7 @@ def test_mpi_vertical_block_is_stacked_and_integrates() -> None:
     )
     assert JAXOpsBlock._is_stacked_layout(rod_block)
 
-    simulator = _RodBlockSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
     n_rods_total = 4

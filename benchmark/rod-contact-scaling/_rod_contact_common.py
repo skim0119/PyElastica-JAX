@@ -60,14 +60,6 @@ class ContactScalingConfig:
         return np.array([0.0, 0.0, 0.5 * self.rod_length], dtype=np.float64)
 
 
-class ContactScalingSimulator(eaj.Simulator):
-    """System collection for the rod-rod contact scaling benchmark."""
-
-
-class ContactScalingPairwiseSimulator(eaj.Simulator):
-    """JAX scaling benchmark using per-rod-pair ``RodRodContactJax`` operators."""
-
-
 class ContactScalingPyElasticaSimulator(
     ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Contact
 ):
@@ -135,9 +127,9 @@ def build_simulation(
     *,
     device: jax.Device,
     broad_phase: str = "spatial_hash",
-) -> tuple[ContactScalingSimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build a packed rod block with center attraction and rod-rod contact only."""
-    simulator = ContactScalingSimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -204,11 +196,9 @@ def build_simulation_pairwise(
     config: ContactScalingConfig,
     *,
     device: jax.Device,
-) -> tuple[
-    ContactScalingPairwiseSimulator, eaj._CosseratRodMemoryBlock, list[ea.CosseratRod]
-]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock, list[ea.CosseratRod]]:
     """Build packed rods with PyElastica-style per-pair rod-rod contact."""
-    simulator = ContactScalingPairwiseSimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     rods: list[ea.CosseratRod] = []

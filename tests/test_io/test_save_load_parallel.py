@@ -153,12 +153,8 @@ def test_save_load_with_comm_root_roundtrip(tmp_path: Path) -> None:
     )
 
 
-class _Hdf5Simulator(eaj.Simulator):
-    pass
-
-
-def _finalize_simulator() -> tuple[_Hdf5Simulator, eaj._CosseratRodMemoryBlock]:
-    simulator = _Hdf5Simulator()
+def _finalize_simulator() -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(
         device=jax.devices("cpu")[0],
         device_dtype=np.float64,

@@ -28,10 +28,6 @@ class _MarkerRodRodOp(eaj.NoRodRodBlockOpJax):
         return rod_one_view, rod_two_view
 
 
-class _RodRodTestSimulator(eaj.Simulator):
-    pass
-
-
 def _distinct_cosserat_rod_types() -> tuple[type[ea.CosseratRod], type[ea.CosseratRod]]:
     skip_attrs = {
         "__dict__",
@@ -73,7 +69,7 @@ def _build_test_rod(
 
 def test_jax_rod2rod_op_updates_paired_rods() -> None:
     with jax.default_device(jax.devices("cpu")[0]):
-        simulator = _RodRodTestSimulator()
+        simulator = eaj.Simulator()
         rod_block = eaj.configure_rod_block()
         simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -107,7 +103,7 @@ def test_jax_rod2rod_op_updates_paired_rods() -> None:
 def test_jax_rod2rod_op_updates_paired_rods_across_blocks() -> None:
     with jax.default_device(jax.devices("cpu")[0]):
         body_type, muscle_type = _distinct_cosserat_rod_types()
-        simulator = _RodRodTestSimulator()
+        simulator = eaj.Simulator()
         body_block = eaj.configure_rod_block()
         muscle_block = eaj.configure_rod_block()
         simulator.enable_block_supports(body_type, body_block)

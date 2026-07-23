@@ -37,10 +37,6 @@ class BaseSimulator(BaseSystemCollection, Constraints, Forcing):
     pass
 
 
-class JaxSimulator(eaj.Simulator):
-    pass
-
-
 def sinusoidal_activation(time: float) -> float:
     return 0.5 * (1.0 + np.sin(2.0 * np.pi * ACTIVATION_FREQUENCY * time))
 
@@ -222,7 +218,7 @@ def run_jax_simulation(
     muscle_rod: CosseratRod,
 ) -> tuple[float, np.ndarray]:
     # Setup
-    simulator = JaxSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(MuscleArm, muscle_block_with("cpu", "float64"))
 
     simulator.append(muscle_rod)

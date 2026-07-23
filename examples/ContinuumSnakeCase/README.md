@@ -14,7 +14,7 @@ replacement for the full continuum snake benchmark.
 ContinuumSnakeGPUCase/
 ├── README.md
 ├── run_continuum_snake_gpu.py   # entry point: SnakeParameters, rollouts, comparison
-├── environment.py               # simulator mixins, build_simulation
+├── environment.py               # build_simulation / build_reference_simulation
 ├── post_processing.py           # difference summary, centerline plot, gait animation
 ├── render/                      # generated mp4 animation (gitignored)
 └── operators/

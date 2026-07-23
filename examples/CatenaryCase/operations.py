@@ -118,17 +118,13 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
         return rod_view
 
 
-class CatenarySimulator(eaj.Simulator):
-    """Simulator collection for the catenary case."""
-
-
 def build_simulator(
     parameters: CatenaryParameters,
     *,
     backend: str,
-) -> tuple[CatenarySimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the catenary simulator."""
-    simulator = CatenarySimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(device=backend)
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 

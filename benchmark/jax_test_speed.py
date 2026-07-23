@@ -53,10 +53,6 @@ class BenchmarkCPUFullSimulator(ea.BaseSystemCollection, ea.Forcing, ea.Damping)
     pass
 
 
-class BenchmarkJAXSimulator(eaj.Simulator):
-    pass
-
-
 class _ConfiguredBenchmarkMemoryBlock(ea.MemoryBlockCosseratRodJax):
     device_dtype = np.dtype(np.float64)
     device = None
@@ -448,7 +444,7 @@ def gpu_full_rollout_loop(
     stepper = ea.PositionVerletJAX()
 
     def build_sim():
-        sim = BenchmarkJAXSimulator()
+        sim = eaj.Simulator()
         sim.enable_block_supports(ea.CosseratRod, _ConfiguredBenchmarkMemoryBlock)
         rod = build_rod(n_elems)
         sim.append(rod)

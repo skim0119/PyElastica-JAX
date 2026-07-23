@@ -26,13 +26,9 @@ def _straight_rod(*, start: np.ndarray) -> ea.CosseratRod:
     )
 
 
-class _PairwiseContactSimulator(eaj.Simulator):
-    pass
-
-
 def test_rod_rod_contact_jax_updates_external_forces() -> None:
     with jax.default_device(jax.devices("cpu")[0]):
-        simulator = _PairwiseContactSimulator()
+        simulator = eaj.Simulator()
         rod_block = eaj.configure_rod_block()
         simulator.enable_block_supports(ea.CosseratRod, rod_block)
 

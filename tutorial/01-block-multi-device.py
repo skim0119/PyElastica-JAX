@@ -36,17 +36,13 @@ import jax  # noqa: E402
 jax.config.update("jax_enable_x64", True)
 
 
-class CantileverSimulator(eaj.Simulator):
-    pass
-
-
 def main(
     n_rods: int = N_DEVICES,
     final_time: float = 100.0,
     time_step: float = 1.0e-4,
     show: bool = False,
 ) -> None:
-    simulator = CantileverSimulator()
+    simulator = eaj.Simulator()
     rod_block_1 = eaj.configure_rod_block(
         device=jax.devices()[0],
         device_dtype=np.float64,

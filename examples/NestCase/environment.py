@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 _SHEAR_CORRECTION = 4.0 / 3.0
 
 
-class NestSimulator(eaj.Simulator):
-    """System collection mixin for the JAX nest packing case."""
-
-
 def generate_random_rods(
     *,
     num_rods: int,
@@ -108,7 +104,7 @@ def build_simulation(
     parameters: NestParameters,
     *,
     device: str,
-) -> tuple[NestSimulator, eaj._CosseratRodMemoryBlock]:
+) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the nest simulator.
 
     Parameters
@@ -120,10 +116,10 @@ def build_simulation(
 
     Returns
     -------
-    tuple[NestSimulator, elastica_jax._CosseratRodMemoryBlock]
+    tuple[eaj.Simulator, elastica_jax._CosseratRodMemoryBlock]
         The finalized simulator and its packed rod block.
     """
-    simulator = NestSimulator()
+    simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(device=device)
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
@@ -146,7 +142,7 @@ def build_simulation(
     return simulator, rod_block
 
 
-def _append_rods(simulator: NestSimulator, parameters: NestParameters) -> None:
+def _append_rods(simulator: eaj.Simulator, parameters: NestParameters) -> None:
     """Create straight rods with C++-matched shear stiffness and append them."""
     shear_stiffness = (
         _SHEAR_CORRECTION * parameters.shear_modulus * np.pi * parameters.rod_radius**2
@@ -177,7 +173,7 @@ def _append_rods(simulator: NestSimulator, parameters: NestParameters) -> None:
 
 
 def _register_operators(
-    simulator: NestSimulator,
+    simulator: eaj.Simulator,
     rod_block: eaj._CosseratRodMemoryBlock,
     parameters: NestParameters,
 ) -> None:

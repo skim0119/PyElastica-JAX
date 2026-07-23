@@ -74,10 +74,6 @@ class PyElasticaSimulator(ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Co
     pass
 
 
-class JAXSimulator(eaj.Simulator):
-    pass
-
-
 JAXRodBlock: TypeAlias = (
     eaj._CosseratRodMemoryBlock
     | eaj._CosseratRodVerticalMemoryBlock
@@ -113,7 +109,7 @@ def _distinct_cosserat_rod_types() -> tuple[type[ea.CosseratRod], type[ea.Cosser
 
 
 def _configure_jax_block_operators(
-    simulator: JAXSimulator,
+    simulator: eaj.Simulator,
     rod_blocks: Sequence[JAXRodBlock],
 ) -> None:
     b_coeff = default_b_coeff()
@@ -227,7 +223,7 @@ def build_jax_sim(
     device_dtype: np.dtype,
     n_snakes: int,
     inner_block_cls: type | None = None,
-) -> tuple[JAXSimulator, JAXRodBlock]:
+) -> tuple[eaj.Simulator, JAXRodBlock]:
     rod_block: JAXRodBlock
     configure_kwargs: dict[str, Any] = {
         "device": device,
@@ -237,7 +233,7 @@ def build_jax_sim(
         configure_kwargs["inner_block_cls"] = inner_block_cls
     rod_block = eaj.configure_rod_block(**configure_kwargs)
 
-    sim = JAXSimulator()
+    sim = eaj.Simulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
     for _ in range(n_snakes):
         rod = build_rod()
@@ -254,7 +250,7 @@ def build_jax_sim_gpu2x(
     devices: Sequence[jax.Device],
     device_dtype: np.dtype,
     n_snakes: int,
-) -> tuple[JAXSimulator, tuple[JAXRodBlock, JAXRodBlock]]:
+) -> tuple[eaj.Simulator, tuple[JAXRodBlock, JAXRodBlock]]:
     """Build two explicitly assigned rod blocks on separate devices."""
     assert len(devices) >= 2, "gpu2x requires at least two devices."
     assert n_snakes >= 2, "gpu2x requires at least two snakes."
@@ -270,7 +266,7 @@ def build_jax_sim_gpu2x(
             device_dtype=np.dtype(device_dtype),
         ),
     )
-    simulator = JAXSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(first_rod_type, rod_blocks[0])
     simulator.enable_block_supports(second_rod_type, rod_blocks[1])
 
@@ -407,7 +403,7 @@ def run_pyelastica_rollout_mpi(
 
 
 def integrate_jax_block_rollout(
-    jax_sim: JAXSimulator,
+    jax_sim: eaj.Simulator,
     jax_blocks: Sequence[JAXRodBlock],
     *,
     steps: int,
@@ -573,7 +569,7 @@ def build_jax_sim_mpi(
     n_snakes_total: int,
     backend: str = "cpu",
     vertical: bool = False,
-) -> tuple[JAXSimulator, eaj._MpiCosseratRodBlock]:
+) -> tuple[eaj.Simulator, eaj._MpiCosseratRodBlock]:
     """Build a JAX simulator with rods distributed across MPI ranks."""
     device = resolve_mpi_block_device(backend=backend, comm=comm)
     inner_block_cls = (
@@ -585,7 +581,7 @@ def build_jax_sim_mpi(
         device=device,
         inner_block_cls=inner_block_cls,
     )
-    simulator = JAXSimulator()
+    simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     for snake_index in range(n_snakes_total):
         if rod_block.owns_rod(snake_index):
