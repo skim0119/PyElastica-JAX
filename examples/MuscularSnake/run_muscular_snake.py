@@ -76,10 +76,9 @@ class MuscularSnakeParameters:
     muscle_radius_belly: float = 0.006
     muscle_start_connection_index: tuple[int, ...] = (4, 4, 33, 33, 23, 23, 61, 61)
     muscle_force_amplitudes: np.ndarray = field(
-        default_factory=lambda: np.array(
-            [22.96, 22.96, 20.95, 20.95, 9.51, 9.51, 13.7, 13.7]
-        )[::-1]
-        / 2.0
+        default_factory=lambda: (
+            np.array([22.96, 22.96, 20.95, 20.95, 9.51, 9.51, 13.7, 13.7])[::-1] / 2.0
+        )
     )
 
     time_step: float = 5e-6
