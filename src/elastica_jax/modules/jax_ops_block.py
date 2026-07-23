@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
-from elastica_jax.protocol import JAXBlockExecution, JAXBlockStages
 from .jax_ops import JAXBasicMixins
 
 _JAX_ROD_BLOCK_TYPES = (
@@ -119,7 +118,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
     def __init__(self) -> None:
         self._jax_block_ops_list = []
-        self._jax_local_block_stages: dict[int, dict[str, list[Any]]] = {}
         super().__init__()
         self._feature_group_finalize.append(self._finalize_jax_block_ops)
 
@@ -178,19 +176,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
             updated_states = list(states)
             updated_states[block_state_idx] = updated_state
             return tuple(updated_states)
-
-        return apply
-
-    @classmethod
-    def _wrap_local_jax_block_operator(
-        cls,
-        operator: Any,
-        block_system: JAXRodBlockSystem,
-    ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
-        def apply(state: dict[str, Any], time: Any) -> dict[str, Any]:
-            return cls._vmap_block_operator_over_rods(
-                operator, block_system, state, time
-            )
 
         return apply
 
@@ -394,23 +379,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
         return apply
 
-    @classmethod
-    def _wrap_local_jax_per_rod_operator(
-        cls,
-        *,
-        block_system: JAXRodBlockSystem,
-        operators: Any | tuple[Any, ...],
-    ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
-        def apply(state: dict[str, Any], time: Any) -> dict[str, Any]:
-            return cls._apply_per_rod_operator_to_block_state(
-                block_system=block_system,
-                block_state=state,
-                operators=operators,
-                time=time,
-            )
-
-        return apply
-
     def _finalize_jax_block_ops(self) -> None:
         final_systems = tuple(self.final_systems())
 
@@ -470,11 +438,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 instantiate_target = block_system._systems[0]
             op_instance = jax_op.instantiate(instantiate_target)
 
-            local_stages = self._jax_local_block_stages.setdefault(
-                block_state_idx,
-                {stage: [] for stage, *_ in _BLOCK_STAGE_METHODS},
-            )
-
             for (
                 stage,
                 block_method_name,
@@ -503,9 +466,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                         operator=operator,
                     )
                     staged_wrappers.append((stage, wrapped))
-                    local_stages[stage].append(
-                        self._wrap_local_jax_block_operator(operator, block_system)
-                    )
                     continue
 
                 if has_per_rod or has_single_rod:
@@ -525,12 +485,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                         operators=operators,
                     )
                     staged_wrappers.append((stage, wrapped))
-                    local_stages[stage].append(
-                        self._wrap_local_jax_per_rod_operator(
-                            block_system=block_system,
-                            operators=operators,
-                        )
-                    )
 
             assert staged_wrappers, (
                 f"{type(op_instance)} does not define any JAX block stage methods. "
@@ -545,54 +499,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
 
         self._jax_block_ops_list = []
         del self._jax_block_ops_list
-
-    def jax_independent_block_executions(
-        self,
-    ) -> tuple[JAXBlockExecution, ...] | None:
-        """
-        Return block-local stage metadata when no operator couples block states.
-
-        Returns
-        -------
-        tuple[JAXBlockExecution, ...] | None
-            One execution description per finalized block. ``None`` indicates that
-            at least one registered stage operator couples block states.
-        """
-        stage_groups = {
-            "constrain_values": self._feature_group_constrain_values,
-            "synchronize": self._feature_group_synchronize,
-            "constrain_rates": self._feature_group_constrain_rates,
-        }
-        registered_counts = {
-            stage: sum(
-                len(stage_map[stage])
-                for stage_map in self._jax_local_block_stages.values()
-            )
-            for stage in stage_groups
-        }
-        actual_counts = {
-            stage: sum(1 for _ in group) for stage, group in stage_groups.items()
-        }
-        actual_counts["constrain_rates"] += sum(1 for _ in self._feature_group_damping)
-        if registered_counts != actual_counts:
-            return None
-
-        executions = []
-        for block_state_idx, _system in enumerate(self.final_systems()):
-            stage_map = self._jax_local_block_stages.get(
-                block_state_idx,
-                {stage: [] for stage in stage_groups},
-            )
-            executions.append(
-                JAXBlockExecution(
-                    stages=JAXBlockStages(
-                        constrain_values=tuple(stage_map["constrain_values"]),
-                        synchronize=tuple(stage_map["synchronize"]),
-                        constrain_rates=tuple(stage_map["constrain_rates"]),
-                    )
-                )
-            )
-        return tuple(executions)
 
     def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
         assert stage in (

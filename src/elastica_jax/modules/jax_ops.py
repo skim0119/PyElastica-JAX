@@ -11,7 +11,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodView,
     JAXRodViewMetadata,
 )
-from elastica_jax.protocol import JAXBlockExecution, JAXPyTree, JAXScalar
+from elastica_jax.protocol import JAXPyTree, JAXScalar
 from elastica.typing import SystemIdxType
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
@@ -32,12 +32,6 @@ class JAXBasicMixins:
     _feature_group_constrain_values: Any
     _feature_group_constrain_rates: Any
     _feature_group_damping: Any
-
-    def jax_independent_block_executions(
-        self,
-    ) -> tuple[JAXBlockExecution, ...] | None:
-        """Return ``None`` for collections that do not support block-local rollouts."""
-        return None
 
     def jax_synchronize(
         self,

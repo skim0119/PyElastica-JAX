@@ -414,7 +414,7 @@ def integrate_jax_block_rollout(
     warmup_runs: int,
 ) -> float:
     dt_value = DEFAULT_DT
-    stepper = eaj.PositionVerletJAX(use_independent_block_rollout=True)
+    stepper = eaj.PositionVerletJAX()
     time_value = np.float64(0.0)
     for _ in range(warmup_runs):
         time_value = stepper.integrate(

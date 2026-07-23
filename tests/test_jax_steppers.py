@@ -53,9 +53,6 @@ class FakeJAXCollection:
     def final_systems(self):
         yield from self._systems
 
-    def jax_independent_block_executions(self):
-        return None
-
     def jax_constrain_values(self, states, time):
         return tuple(
             {**state, "position": state["position"] + jnp.asarray(10.0)}

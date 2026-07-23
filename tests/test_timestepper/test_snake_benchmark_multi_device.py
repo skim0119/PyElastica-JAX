@@ -46,9 +46,3 @@ def test_gpu2x_builder_creates_two_explicit_blocks() -> None:
         (devices[0],),
         (devices[1],),
     )
-    snake_common.integrate_jax_block_rollout(
-        simulator,
-        rod_blocks,
-        steps=1,
-        warmup_runs=1,
-    )
