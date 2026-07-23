@@ -30,6 +30,7 @@ dependencies = [
     "h5py",
     "mpi4py",
     "mpi4jax",
+    "jaxtyping>=0.3.11",
 ]
 
 [project.urls]
