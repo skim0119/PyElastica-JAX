@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Ref: https://docs.github.com/en/free-pro-team@latest/actions/guides/building-and-testing-python
+      # h5py/mpi4py are built from source (tool.uv.no-binary-package).
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libhdf5-dev \
+            libopenmpi-dev \
+            openmpi-bin
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
