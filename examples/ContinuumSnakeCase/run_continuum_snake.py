@@ -93,7 +93,7 @@ class SnakeParameters:
 
     @property
     def b_coeff_array(self) -> np.ndarray:
-        return self.b_coeff
+        return np.asarray(self.b_coeff, dtype=np.float64)
 
     @property
     def plane_origin(self) -> np.ndarray:

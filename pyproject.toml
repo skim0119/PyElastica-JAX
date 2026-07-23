@@ -108,6 +108,7 @@ ignore = [
     "E402",
     "E501",
     "E731",
+    "F722",  # jaxtyping shape strings, e.g. Float[Array, "3 n_nodes"]
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -138,6 +139,10 @@ disallow_any_unimported = false
 disallow_any_generics = false
 disallow_incomplete_defs = true
 disallow_untyped_calls = true
+untyped_calls_exclude = [
+    "jax",
+    "jaxlib",
+]
 disallow_untyped_defs = true
 ignore_missing_imports = true
 implicit_reexport = true
@@ -153,10 +158,18 @@ warn_return_any = false
 warn_unreachable = false
 warn_unused_configs = true
 warn_unused_ignores = false
+disallow_subclassing_any = false
 
 exclude = [
     "src/elastica_jax/experimental/*",
 ]
+
+[[tool.mypy.overrides]]
+module = [
+    "elastica",
+    "elastica.*",
+]
+follow_imports = "skip"
 
 [tool.coverage.report]
 # Regexes for lines to exclude from consideration

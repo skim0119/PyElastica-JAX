@@ -621,13 +621,13 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         else:
             sharding = NamedSharding(
                 self._mesh,
-                P(),  # type: ignore[no-untyped-call]
+                P(),
             )
         return jax.device_put(value, sharding)
 
     @staticmethod
     def _rod_partition_spec(ndim: int) -> P:
-        return P("rod", *([None] * (ndim - 1)))  # type: ignore[no-untyped-call]
+        return P("rod", *([None] * (ndim - 1)))
 
     def _distributed_map(
         self,
@@ -639,7 +639,7 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         assert self._mesh is not None, "Distributed map requires a multi-device mesh."
         in_specs = tuple(
             (
-                P()  # type: ignore[no-untyped-call]
+                P()
                 if int(getattr(arg, "ndim", 0)) == 0
                 else self._rod_partition_spec(int(getattr(arg, "ndim", 0)))
             )

@@ -99,13 +99,12 @@ def build_simulator(
 ) -> tuple[ButterflySimulator, eaj._CosseratRodMemoryBlock, ea.CosseratRod]:
     """Build and finalize the butterfly simulator."""
     simulator = ButterflySimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend)
-    simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
+    rod_block = eaj.configure_rod_block(device=backend)
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
     rod = build_rod(parameters)
     simulator.append(rod)
     simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    return simulator, block, rod
+    return simulator, rod_block, rod
 
 
 def extract_positions(block: eaj._CosseratRodMemoryBlock) -> np.ndarray:

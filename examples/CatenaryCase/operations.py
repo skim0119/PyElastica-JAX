@@ -44,11 +44,14 @@ class CatenaryParameters:
 class GravityForcesJax(eaj.NoOpsJax):
     """Apply uniform gravitational body forces to a rod."""
 
-    def __init__(self, *, acc_gravity: np.ndarray, _system: object) -> None:
-        del _system
+    def __init__(self, *, acc_gravity: np.ndarray, **kwargs: object) -> None:
         self.acc_gravity = acc_gravity
 
-    def jax_operate_synchronize(self, rod_view, time):
+    def jax_operate_synchronize(
+        self,
+        rod_view: eaj.JAXRodView,
+        time: eaj.JAXTime,
+    ) -> eaj.JAXRodView:
         del time
         rod_view.external_forces = (
             rod_view.external_forces
@@ -65,7 +68,7 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
         *,
         constrained_position_idx: tuple[int, ...] = (0, -1),
         constrained_director_idx: tuple[int, ...] = (0, -1),
-        _system: object,
+        _system: eaj.RodSystemLike,
     ) -> None:
         n_nodes = _system.position_collection.shape[1]
         n_elems = _system.director_collection.shape[2]
@@ -82,7 +85,11 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
             for idx in constrained_director_idx
         }
 
-    def jax_operate_constrain_values(self, rod_view, time):
+    def jax_operate_constrain_values(
+        self,
+        rod_view: eaj.JAXRodView,
+        time: eaj.JAXTime,
+    ) -> eaj.JAXRodView:
         del time
         for node_idx, fixed_position in self.fixed_positions.items():
             rod_view.position_collection = rod_view.position_collection.at[
@@ -94,7 +101,11 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
             ].set(fixed_director)
         return rod_view
 
-    def jax_operate_constrain_rates(self, rod_view, time):
+    def jax_operate_constrain_rates(
+        self,
+        rod_view: eaj.JAXRodView,
+        time: eaj.JAXTime,
+    ) -> eaj.JAXRodView:
         del time
         for node_idx in self.fixed_positions:
             rod_view.velocity_collection = rod_view.velocity_collection.at[
@@ -118,8 +129,8 @@ def build_simulator(
 ) -> tuple[CatenarySimulator, eaj._CosseratRodMemoryBlock]:
     """Build and finalize the catenary simulator."""
     simulator = CatenarySimulator()
-    rod_block_cls = eaj.configure_rod_block(device=backend)
-    simulator.enable_block_supports(ea.CosseratRod, rod_block_cls)
+    rod_block = eaj.configure_rod_block(device=backend)
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
 
     start = np.zeros(3)
     direction = np.array([1.0, 0.0, 0.0])
@@ -138,23 +149,22 @@ def build_simulator(
     simulator.append(rod)
 
     gravity_vector = -parameters.gravity * normal
-    simulator.operate_block(rod_block_cls).using(
+    simulator.operate_block(rod_block).using(
         GravityForcesJax,
         acc_gravity=gravity_vector,
     )
-    simulator.operate_block(rod_block_cls).using(
+    simulator.operate_block(rod_block).using(
         eaj.AnalyticalLinearDamperJax,
         damping_constant=parameters.damping_constant,
         time_step=parameters.time_step,
     )
-    simulator.operate_block(rod_block_cls).using(
+    simulator.operate_block(rod_block).using(
         FixedEndsConstraintJax,
         constrained_position_idx=(0, -1),
         constrained_director_idx=(0, -1),
     )
     simulator.finalize()
-    block = tuple(simulator.final_systems())[0]
-    return simulator, block
+    return simulator, rod_block
 
 
 def extract_positions(block: eaj._CosseratRodMemoryBlock) -> np.ndarray:

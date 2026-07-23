@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Type
+from typing import Any, Type, TypeVar, overload
 
 import jax
 import numpy as np
@@ -17,6 +17,8 @@ from elastica_jax.memory_block.protocol import RodBlockProtocol
 
 DEFAULT_ROD_BLOCK_BACKEND = "cpu"
 DEFAULT_ROD_BLOCK_DTYPE = np.dtype(np.float64)
+
+TRodBlock = TypeVar("TRodBlock", bound=RodBlockProtocol)
 
 
 def resolve_backend_devices(backend: str) -> tuple[jax.Device, ...]:
@@ -43,6 +45,23 @@ def _normalize_device_dtype(device_dtype: str | np.dtype) -> np.dtype:
     return normalized
 
 
+@overload
+def configure_rod_block(
+    *,
+    device: str | jax.Device | Sequence[jax.Device] = ...,
+    device_dtype: str | np.dtype = ...,
+) -> _CosseratRodMemoryBlock: ...
+
+
+@overload
+def configure_rod_block(
+    *,
+    device: str | jax.Device | Sequence[jax.Device] = ...,
+    device_dtype: str | np.dtype = ...,
+    inner_block_cls: Type[TRodBlock],
+) -> TRodBlock: ...
+
+
 def configure_rod_block(
     *,
     device: str | jax.Device | Sequence[jax.Device] = DEFAULT_ROD_BLOCK_BACKEND,
@@ -53,7 +72,10 @@ def configure_rod_block(
     Return a configured Cosserat rod block for ``enable_block_supports``.
 
     PyElastica builds the block by calling the returned instance as
-    ``block(systems, system_idx_list)`` during ``finalize()``.
+    ``block(systems, system_idx_list)`` during ``finalize()``. Elastica types
+    the second argument of ``enable_block_supports`` as a block *class*; at
+    runtime a configured instance is valid because finalize calls it as
+    ``block(systems, idxs)``.
     """
     if isinstance(device, str):
         device = resolve_backend_devices(device)[0]  # TODO: handle multiple devices
@@ -77,7 +99,7 @@ def configure_rod_block_mpi(
     device_dtype: str | np.dtype = DEFAULT_ROD_BLOCK_DTYPE,
     inner_block_cls: Type[RodBlockProtocol] = _CosseratRodMemoryBlock,
     device: str | jax.Device = DEFAULT_ROD_BLOCK_BACKEND,
-) -> RodBlockProtocol:
+) -> _MpiCosseratRodBlock:
     """
     Return a configured MPI-local Cosserat rod block for ``enable_block_supports``.
 

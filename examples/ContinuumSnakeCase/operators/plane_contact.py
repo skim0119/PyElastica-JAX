@@ -9,8 +9,8 @@ from elastica_jax._linalg import (
     _jax_batch_cross as _batch_cross,
     _jax_batch_matvec as _batch_matvec,
 )
+from elastica_jax.typing import Array
 
-import jax
 import jax.numpy as jnp
 
 
@@ -32,11 +32,10 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         nu: float,
         kinetic_mu_array: np.ndarray,
         static_mu_array: np.ndarray,
-        _system,
+        **kwargs: object,
     ) -> None:
-        del _system
-        self.plane_origin = plane_origin
-        self.plane_normal = plane_normal
+        self.plane_origin = jnp.asarray(plane_origin)
+        self.plane_normal = jnp.asarray(plane_normal)
         self.surface_tol = 1.0e-4
         self.slip_velocity_tol = slip_velocity_tol
         self.k = k
@@ -48,7 +47,11 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         self.static_mu_backward = static_mu_array[1]
         self.static_mu_sideways = static_mu_array[2]
 
-    def jax_operate_synchronize(self, rod_view, time):
+    def jax_operate_synchronize(
+        self,
+        rod_view: eaj.JAXRodView,
+        time: eaj.JAXTime,
+    ) -> eaj.JAXRodView:
         del time
         plane_origin = self.plane_origin
         plane_normal = self.plane_normal
@@ -213,14 +216,12 @@ class SnakePlaneContactJax(eaj.NoOpsJax):
         return rod_view
 
 
-def _node_to_element_position_jax(position_collection: jax.Array) -> jax.Array:
+def _node_to_element_position_jax(position_collection: Array) -> Array:
     """Average neighbouring node positions onto element centers."""
     return 0.5 * (position_collection[:, 1:] + position_collection[:, :-1])
 
 
-def _node_to_element_velocity_jax(
-    mass: jax.Array, velocity_collection: jax.Array
-) -> jax.Array:
+def _node_to_element_velocity_jax(mass: Array, velocity_collection: Array) -> Array:
     """Mass-weighted interpolation of nodal velocities onto elements."""
     numerator = (
         mass[jnp.newaxis, 1:] * velocity_collection[:, 1:]
@@ -230,7 +231,7 @@ def _node_to_element_velocity_jax(
     return numerator / denominator
 
 
-def _node_to_element_mass_or_force_jax(nodal_collection: jax.Array) -> jax.Array:
+def _node_to_element_mass_or_force_jax(nodal_collection: Array) -> Array:
     """Distribute a nodal quantity (mass or force) onto elements."""
     elemental_collection = 0.5 * (nodal_collection[:, :-1] + nodal_collection[:, 1:])
     elemental_collection = elemental_collection.at[:, 0].add(
@@ -242,7 +243,7 @@ def _node_to_element_mass_or_force_jax(nodal_collection: jax.Array) -> jax.Array
     return elemental_collection
 
 
-def _elements_to_nodes_jax(element_collection: jax.Array) -> jax.Array:
+def _elements_to_nodes_jax(element_collection: Array) -> Array:
     """Spread an elemental quantity onto the two adjacent nodes."""
     node_collection = jnp.zeros(
         (element_collection.shape[0], element_collection.shape[1] + 1),
@@ -254,8 +255,8 @@ def _elements_to_nodes_jax(element_collection: jax.Array) -> jax.Array:
 
 
 def _find_slipping_elements_jax(
-    velocity_slip: jax.Array, velocity_threshold: jax.Array
-) -> jax.Array:
+    velocity_slip: Array, velocity_threshold: float
+) -> Array:
     """Return the smooth slip function used for anisotropic Coulomb friction."""
     abs_velocity_slip = jnp.linalg.norm(velocity_slip, axis=0)
     normalized = abs_velocity_slip / velocity_threshold - 1.0
