@@ -118,7 +118,7 @@ class FixedEndsConstraintJax(eaj.NoOpsJax):
         return rod_view
 
 
-class CatenarySimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class CatenarySimulator(eaj.Simulator):
     """Simulator collection for the catenary case."""
 
 

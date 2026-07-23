@@ -74,7 +74,7 @@ class PyElasticaSimulator(ea.BaseSystemCollection, ea.Forcing, ea.Damping, ea.Co
     pass
 
 
-class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class JAXSimulator(eaj.Simulator):
     pass
 
 

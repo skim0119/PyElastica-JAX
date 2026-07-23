@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 
 import elastica as ea
+import elastica_jax as eaj
 
 from batch_muscle import BatchMuscle
 from memory_block_muscle_rods_jax import muscle_block_with
@@ -17,7 +18,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 
-class MuscleArmSimulator(ea.BaseSystemCollection, ea.JAXOps):
+class MuscleArmSimulator(eaj.Simulator):
     pass
 
 

@@ -37,7 +37,7 @@ class BaseSimulator(BaseSystemCollection, Constraints, Forcing):
     pass
 
 
-class JaxSimulator(BaseSystemCollection, eaj.JAXOps):
+class JaxSimulator(eaj.Simulator):
     pass
 
 

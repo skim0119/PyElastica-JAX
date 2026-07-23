@@ -41,13 +41,8 @@ _MUSCLE_BELLY_START_ELEM = 4 * 3
 _MUSCLE_BELLY_END_ELEM = 9 * 3
 
 
-class MuscularSnakeSimulator(
-    ea.BaseSystemCollection,
-    eaj.JAXOps,
-    eaj.JAXOpsBlock,
-    eaj.JAXInteraction,
-):
-    """System collection mixin for the JAX muscular snake case."""
+class MuscularSnakeSimulator(eaj.Simulator):
+    """System collection for the JAX muscular snake case."""
 
 
 def build_simulation(

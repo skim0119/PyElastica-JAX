@@ -16,6 +16,7 @@ import time
 import numpy as np
 
 import elastica as ea
+import elastica_jax as eaj
 
 try:
     import jax
@@ -31,11 +32,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime-only guard
 jax_config.update("jax_enable_x64", True)
 
 
-class RodSphereTipJAXSimulator(
-    ea.BaseSystemCollection,
-    ea.JAXOps,
-    ea.JAXOpsRodRigidBody,
-):
+class RodSphereTipJAXSimulator(eaj.Simulator):
     pass
 
 

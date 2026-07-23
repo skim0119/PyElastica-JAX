@@ -48,7 +48,7 @@ class TimoshenkoParameters:
         return np.array([self.end_force_x, 0.0, 0.0], dtype=np.float64)
 
 
-class TimoshenkoSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
+class TimoshenkoSimulator(eaj.Simulator):
     """Simulator collection for the Timoshenko beam case."""
 
 

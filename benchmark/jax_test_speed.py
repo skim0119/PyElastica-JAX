@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import elastica as ea
+import elastica_jax as eaj
 from elastica_jax._jax_linalg import (
     _jax_batch_matmul as _batch_matmul_3x3_jax,
     _jax_batch_matvec as _batch_matvec_matrix_vector_jax,
@@ -52,7 +53,7 @@ class BenchmarkCPUFullSimulator(ea.BaseSystemCollection, ea.Forcing, ea.Damping)
     pass
 
 
-class BenchmarkJAXSimulator(ea.BaseSystemCollection, ea.JAXOps):
+class BenchmarkJAXSimulator(eaj.Simulator):
     pass
 
 
