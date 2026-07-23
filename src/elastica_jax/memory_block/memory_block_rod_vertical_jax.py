@@ -619,23 +619,30 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         if ndim > 0 and getattr(value, "shape", (None,))[0] == self.n_rods:
             sharding = NamedSharding(self._mesh, self._rod_partition_spec(ndim))
         else:
-            sharding = NamedSharding(self._mesh, P())
+            sharding = NamedSharding(
+                self._mesh,
+                P(),  # type: ignore[no-untyped-call]
+            )
         return jax.device_put(value, sharding)
 
     @staticmethod
     def _rod_partition_spec(ndim: int) -> P:
-        return P("rod", *([None] * (ndim - 1)))
+        return P("rod", *([None] * (ndim - 1)))  # type: ignore[no-untyped-call]
 
     def _distributed_map(
         self,
-        func,
+        func: Any,
         *,
-        args: tuple[object, ...],
+        args: tuple[Any, ...],
         out_ndims: tuple[int, ...],
-    ):
+    ) -> Any:
         assert self._mesh is not None, "Distributed map requires a multi-device mesh."
         in_specs = tuple(
-            P() if getattr(arg, "ndim", 0) == 0 else self._rod_partition_spec(arg.ndim)
+            (
+                P()  # type: ignore[no-untyped-call]
+                if int(getattr(arg, "ndim", 0)) == 0
+                else self._rod_partition_spec(int(getattr(arg, "ndim", 0)))
+            )
             for arg in args
         )
         out_specs = tuple(self._rod_partition_spec(ndim) for ndim in out_ndims)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import Any, Type
+from typing import Any, Callable, Type
 
 import numpy as np
 
@@ -11,6 +11,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodView,
     JAXRodViewMetadata,
 )
+from elastica_jax.protocol import JAXBlockExecution, JAXPyTree, JAXScalar
 from elastica.typing import SystemIdxType
 
 from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
@@ -21,23 +22,46 @@ _STAGE_METHODS = (
     ("constrain_rates", "jax_operate_constrain_rates"),
 )
 
+JAXStageCallable = Callable[..., tuple[JAXPyTree, ...]]
+
 
 class JAXBasicMixins:
-    def jax_independent_block_executions(self) -> None:
+    """Shared JAX stage transforms mixed into system-collection modules."""
+
+    _feature_group_synchronize: Any
+    _feature_group_constrain_values: Any
+    _feature_group_constrain_rates: Any
+    _feature_group_damping: Any
+
+    def jax_independent_block_executions(
+        self,
+    ) -> tuple[JAXBlockExecution, ...] | None:
         """Return ``None`` for collections that do not support block-local rollouts."""
         return None
 
-    def jax_synchronize(self, states, time):  # type: ignore[no-untyped-def]
+    def jax_synchronize(
+        self,
+        states: tuple[JAXPyTree, ...],
+        time: JAXScalar,
+    ) -> tuple[JAXPyTree, ...]:
         for func in self._feature_group_synchronize:
             states = func(states=states, time=time)
         return states
 
-    def jax_constrain_values(self, states, time):  # type: ignore[no-untyped-def]
+    def jax_constrain_values(
+        self,
+        states: tuple[JAXPyTree, ...],
+        time: JAXScalar,
+    ) -> tuple[JAXPyTree, ...]:
         for func in self._feature_group_constrain_values:
             states = func(states=states, time=time)
         return states
 
-    def jax_constrain_rates(self, states, time):  # type: ignore[no-untyped-def]
+    def jax_constrain_rates(
+        self,
+        states: tuple[JAXPyTree, ...],
+        time: JAXScalar,
+    ) -> tuple[JAXPyTree, ...]:
         for func in chain(
             self._feature_group_constrain_rates,
             self._feature_group_damping,
@@ -58,7 +82,7 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
         super().__init__()
         self._feature_group_finalize.append(self._finalize_jax_ops)
 
-    def operate(self, system) -> ModuleProtocol:  # type: ignore[no-untyped-def]
+    def operate(self, system: Any) -> ModuleProtocol:
         sys_idx = self.get_system_index(system)
         jax_op: ModuleProtocol = _JAXOp(sys_idx)
         self._jax_ops_list.append(jax_op)
@@ -70,8 +94,12 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
         *,
         metadata: JAXRodViewMetadata,
         operator: Any,
-    ):
-        def apply(*, states, time):  # type: ignore[no-untyped-def]
+    ) -> JAXStageCallable:
+        def apply(
+            *,
+            states: tuple[JAXPyTree, ...],
+            time: JAXScalar,
+        ) -> tuple[JAXPyTree, ...]:
             block_state = states[metadata.block_state_idx]
             rod_view = JAXRodView(block_state, metadata)
             updated_view = operator(rod_view, time)
@@ -125,7 +153,7 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
         self._jax_ops_list = []
         del self._jax_ops_list
 
-    def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
+    def _stage_group(self, stage: str) -> Any:
         assert stage in (
             "constrain_values",
             "synchronize",

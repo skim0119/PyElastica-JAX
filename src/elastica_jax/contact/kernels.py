@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 CONTACT_THRESHOLD = 1.0e-8
 
 
-def closest_points_on_segments(p0, p1, q0, q1):
+def closest_points_on_segments(
+    p0: jax.Array,
+    p1: jax.Array,
+    q0: jax.Array,
+    q1: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
     """Vectorized closest points for equally shaped ``(..., 3)`` segments."""
     u = p1 - p0
     v = q1 - q0
@@ -27,13 +34,13 @@ def closest_points_on_segments(p0, p1, q0, q1):
 
 
 def scatter_element_loads(
-    external_forces,
-    external_torques,
-    element_indices,
-    force,
-    torque_world,
-    directors,
-):
+    external_forces: jax.Array,
+    external_torques: jax.Array,
+    element_indices: jax.Array,
+    force: jax.Array,
+    torque_world: jax.Array,
+    directors: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
     nodal_force = 0.5 * force
     external_forces = external_forces.at[:, element_indices].add(nodal_force.T)
     external_forces = external_forces.at[:, element_indices + 1].add(nodal_force.T)
@@ -42,7 +49,7 @@ def scatter_element_loads(
     return external_forces, external_torques
 
 
-def slip_ramp(speed, threshold):
+def slip_ramp(speed: jax.Array, threshold: float | jax.Array) -> jax.Array:
     """Static-to-kinetic blend factor (the C++ ``_linear`` function).
 
     Returns ``1`` for ``speed <= threshold`` (fully static, no kinetic
@@ -70,17 +77,17 @@ def slip_ramp(speed, threshold):
 
 
 def contact_force(
-    distance,
-    normal,
-    relative_velocity,
+    distance: jax.Array,
+    normal: jax.Array,
+    relative_velocity: jax.Array,
     *,
-    contact_stiffness,
-    contact_damping,
-    hertzian=False,
-    friction_coefficient=0.0,
-    static_velocity_threshold=1.0,
-    friction_gate=1.0,
-):
+    contact_stiffness: float | jax.Array,
+    contact_damping: float | jax.Array,
+    hertzian: bool = False,
+    friction_coefficient: float = 0.0,
+    static_velocity_threshold: float = 1.0,
+    friction_gate: float | jax.Array = 1.0,
+) -> jax.Array:
     """Normal contact response with optional Hertzian law and Coulomb friction.
 
     Parameters
@@ -148,31 +155,31 @@ def contact_force(
 
 def apply_capsule_pair_forces(
     *,
-    pair_first,
-    pair_second,
-    pair_active,
-    centers,
-    velocities,
-    axes,
-    lengths,
-    radii,
-    omega,
-    directors,
-    block_element_indices,
-    external_forces,
-    external_torques,
-    contact_stiffness,
-    contact_damping,
-    cached_candidates,
-    last_detection_time,
-    time,
-    steps_between_detection,
-    time_step,
-    hertzian=False,
-    friction_coefficient=0.0,
-    static_velocity_threshold=1.0,
-    friction_gate=1.0,
-):
+    pair_first: jax.Array,
+    pair_second: jax.Array,
+    pair_active: jax.Array,
+    centers: jax.Array,
+    velocities: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    omega: jax.Array,
+    directors: jax.Array,
+    block_element_indices: jax.Array,
+    external_forces: jax.Array,
+    external_torques: jax.Array,
+    contact_stiffness: float | jax.Array,
+    contact_damping: float | jax.Array,
+    cached_candidates: jax.Array,
+    last_detection_time: jax.Array,
+    time: float | jax.Array,
+    steps_between_detection: int | jax.Array,
+    time_step: float | jax.Array,
+    hertzian: bool = False,
+    friction_coefficient: float = 0.0,
+    static_velocity_threshold: float = 1.0,
+    friction_gate: float | jax.Array = 1.0,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Fine-phase capsule contact on a bounded active pair list."""
     first = pair_first
     second = pair_second
@@ -248,21 +255,21 @@ def apply_capsule_pair_forces(
 
 def apply_wall_contacts(
     *,
-    wall_origins,
-    wall_normals,
-    centers,
-    velocities,
-    axes,
-    lengths,
-    radii,
-    omega,
-    directors,
-    block_element_indices,
-    external_forces,
-    external_torques,
-    contact_stiffness,
-    contact_damping,
-):
+    wall_origins: jax.Array | np.ndarray,
+    wall_normals: jax.Array | np.ndarray,
+    centers: jax.Array,
+    velocities: jax.Array,
+    axes: jax.Array,
+    lengths: jax.Array,
+    radii: jax.Array,
+    omega: jax.Array,
+    directors: jax.Array,
+    block_element_indices: jax.Array,
+    external_forces: jax.Array,
+    external_torques: jax.Array,
+    contact_stiffness: float | jax.Array,
+    contact_damping: float | jax.Array,
+) -> tuple[jax.Array, jax.Array]:
     origins = jnp.asarray(wall_origins, dtype=centers.dtype)
     normals = jnp.asarray(wall_normals, dtype=centers.dtype)
     cosine = jnp.einsum("ni,wi->nw", axes, normals)

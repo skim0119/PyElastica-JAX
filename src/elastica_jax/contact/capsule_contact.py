@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from elastica_jax.block_operation import CommunicationScope, NoBlockOpJax
+from elastica_jax.block_operation import JAXTime as BlockJAXTime
 from elastica_jax.contact.capsule_metadata import (
     CONTACT_STATE_CANDIDATE_MASK,
     CONTACT_STATE_LAST_DETECTION_TIME,
@@ -62,7 +63,7 @@ def _rebuild_broad_phase_pairs(
 def _apply_capsule_contact_unified(
     op: CapsuleContactOp,
     state: dict[str, Any],
-    time: jax.Array,
+    time: BlockJAXTime,
 ) -> dict[str, Any]:
     kinematics = capsule_kinematics_from_block_state(state, op.metadata)
     detection_interval = op.steps_between_detection * op.time_step
@@ -74,7 +75,9 @@ def _apply_capsule_contact_unified(
     pair_second = state[CONTACT_STATE_PAIR_SECOND]
     pair_count = state[CONTACT_STATE_PAIR_COUNT]
 
-    def _rebuild(_):
+    def _rebuild(
+        _: None,
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
         return _rebuild_broad_phase_pairs(
             broad_phase=op.metadata.broad_phase,
             centers=kinematics["centers"],
@@ -87,7 +90,7 @@ def _apply_capsule_contact_unified(
             max_cell_occ=op.metadata.max_neighbors_per_capsule,
         )
 
-    def _keep(_):
+    def _keep(_: None) -> tuple[jax.Array, jax.Array, jax.Array]:
         return pair_first, pair_second, pair_count
 
     pair_first, pair_second, pair_count = jax.lax.cond(
@@ -97,6 +100,8 @@ def _apply_capsule_contact_unified(
     pair_slots = jnp.arange(op.metadata.max_pairs, dtype=jnp.int32)
     pair_active = pair_slots < pair_count
 
+    contact_stiffness: float | jax.Array
+    contact_damping: float | jax.Array
     if op.contact_stiffness_initial is not None:
         contact_stiffness = jnp.where(
             time < op.stiffness_ramp_time,
@@ -197,7 +202,7 @@ class CapsuleContactOp(NoBlockOpJax):
         friction_coefficient: float = 0.0,
         static_velocity_threshold: float = 1.0,
         friction_start_time: float = float("inf"),
-        _system=None,
+        _system: Any = None,
     ) -> None:
         assert _system is not None, (
             "CapsuleContactOp requires a finalized block system."
@@ -236,15 +241,20 @@ class CapsuleContactOp(NoBlockOpJax):
         self.friction_start_time = friction_start_time
         self._rod_ids = jnp.asarray(metadata.rod_ids)
 
-    def jax_block_operate_synchronize(self, state, time):
+    def jax_block_operate_synchronize(
+        self,
+        state: dict[str, Any],
+        time: BlockJAXTime,
+    ) -> dict[str, Any]:
         return _apply_capsule_contact_unified(self, state, time)
 
 
 def _apply_wall_contact_unified(
     op: WallContactOp,
     state: dict[str, Any],
-    time: jax.Array,
+    time: BlockJAXTime,
 ) -> dict[str, Any]:
+    del time
     kinematics = capsule_kinematics_from_block_state(state, op.metadata)
     external_forces, external_torques = apply_wall_contacts(
         wall_origins=op.wall_origins,
@@ -283,7 +293,7 @@ class WallContactOp(NoBlockOpJax):
         contact_stiffness: float,
         contact_damping: float,
         max_neighbors_per_capsule: int = 64,
-        _system=None,
+        _system: Any = None,
     ) -> None:
         assert _system is not None, "WallContactOp requires a finalized block system."
         if metadata is None:
@@ -302,5 +312,9 @@ class WallContactOp(NoBlockOpJax):
         self.contact_stiffness = contact_stiffness
         self.contact_damping = contact_damping
 
-    def jax_block_operate_synchronize(self, state, time):
+    def jax_block_operate_synchronize(
+        self,
+        state: dict[str, Any],
+        time: BlockJAXTime,
+    ) -> dict[str, Any]:
         return _apply_wall_contact_unified(self, state, time)

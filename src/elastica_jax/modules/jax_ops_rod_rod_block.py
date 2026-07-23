@@ -10,10 +10,11 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodViewMetadata,
     _CosseratRodMemoryBlock,
 )
-from elastica.typing import SystemIdxType
+from elastica_jax.protocol import JAXPyTree, JAXScalar
+from elastica.typing import SystemIdxType, SystemProtocol
 
-from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
-from .jax_ops import JAXBasicMixins
+from elastica.modules.protocol import SystemCollectionProtocol
+from .jax_ops import JAXBasicMixins, JAXStageCallable
 
 
 class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
@@ -25,7 +26,7 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
     separate blocks on the same device; cross-device coupling is not supported.
     """
 
-    _jax_rod2rod_ops_list: list[ModuleProtocol]
+    _jax_rod2rod_ops_list: list[_JAXRodRodOp]
 
     def __init__(self) -> None:
         self._jax_rod2rod_ops_list = []
@@ -34,12 +35,12 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
 
     def pairwise_interaction(
         self,
-        first_rod: object,
-        second_rod: object,
-    ) -> ModuleProtocol:
+        first_rod: SystemProtocol,
+        second_rod: SystemProtocol,
+    ) -> _JAXRodRodOp:
         first_sys_idx = self.get_system_index(first_rod)
         second_sys_idx = self.get_system_index(second_rod)
-        jax_op: ModuleProtocol = _JAXRodRodOp(first_sys_idx, second_sys_idx)
+        jax_op = _JAXRodRodOp(first_sys_idx, second_sys_idx)
         self._jax_rod2rod_ops_list.append(jax_op)
         return jax_op
 
@@ -50,10 +51,14 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
         first_metadata: JAXRodViewMetadata,
         second_metadata: JAXRodViewMetadata,
         operator: Any,
-    ):
+    ) -> JAXStageCallable:
         same_block = first_metadata.block_state_idx == second_metadata.block_state_idx
 
-        def apply(*, states, time):  # type: ignore[no-untyped-def]
+        def apply(
+            *,
+            states: tuple[JAXPyTree, ...],
+            time: JAXScalar,
+        ) -> tuple[JAXPyTree, ...]:
             if same_block:
                 block_state = states[first_metadata.block_state_idx]
                 shared_updates: dict[str, Any] = {}

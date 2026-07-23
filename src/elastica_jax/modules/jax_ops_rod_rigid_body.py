@@ -15,10 +15,11 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
     JAXRodViewMetadata,
     _CosseratRodMemoryBlock,
 )
-from elastica.typing import SystemIdxType
+from elastica_jax.protocol import JAXPyTree, JAXScalar
+from elastica.typing import SystemIdxType, SystemProtocol
 
-from elastica.modules.protocol import ModuleProtocol, SystemCollectionProtocol
-from .jax_ops import JAXBasicMixins
+from elastica.modules.protocol import SystemCollectionProtocol
+from .jax_ops import JAXBasicMixins, JAXStageCallable
 
 _STAGE_METHODS = (
     ("constrain_values", "jax_operate_constrain_values"),
@@ -32,7 +33,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
     Register pure-JAX mixed rod/rigid-body operators and expose JAX stage transforms.
     """
 
-    _jax_rod_rigid_body_ops_list: list[ModuleProtocol]
+    _jax_rod_rigid_body_ops_list: list[_JAXRodRigidBodyOp]
 
     def __init__(self) -> None:
         self._jax_rod_rigid_body_ops_list = []
@@ -41,12 +42,12 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
 
     def using_on(
         self,
-        rod_system,
-        rigid_body_system,
-    ) -> ModuleProtocol:  # type: ignore[no-untyped-def]
+        rod_system: SystemProtocol,
+        rigid_body_system: SystemProtocol,
+    ) -> _JAXRodRigidBodyOp:
         rod_sys_idx = self.get_system_index(rod_system)
         rigid_body_sys_idx = self.get_system_index(rigid_body_system)
-        jax_op: ModuleProtocol = _JAXRodRigidBodyOp(rod_sys_idx, rigid_body_sys_idx)
+        jax_op = _JAXRodRigidBodyOp(rod_sys_idx, rigid_body_sys_idx)
         self._jax_rod_rigid_body_ops_list.append(jax_op)
         return jax_op
 
@@ -57,8 +58,12 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
         rod_metadata: JAXRodViewMetadata,
         rigid_body_metadata: JAXRigidBodyViewMetadata,
         operator: Any,
-    ):
-        def apply(*, states, time):  # type: ignore[no-untyped-def]
+    ) -> JAXStageCallable:
+        def apply(
+            *,
+            states: tuple[JAXPyTree, ...],
+            time: JAXScalar,
+        ) -> tuple[JAXPyTree, ...]:
             rod_state = states[rod_metadata.block_state_idx]
             rigid_body_state = states[rigid_body_metadata.block_state_idx]
             rod_view = JAXRodView(rod_state, rod_metadata)
@@ -137,7 +142,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
         self._jax_rod_rigid_body_ops_list = []
         del self._jax_rod_rigid_body_ops_list
 
-    def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
+    def _stage_group(self, stage: str) -> Any:
         assert stage in (
             "constrain_values",
             "synchronize",
