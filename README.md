@@ -42,7 +42,7 @@ import jax.numpy as jnp
 import elastica as ea
 import elastica_jax as eaj
 
-simulator = eaj.Simulator()
+simulator = eaj.Simulator()  # <-- create the system collection. Unified API for all operations.
 rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(  # <-- assign the JAX block for CosseratRod
     ea.CosseratRod,
@@ -129,7 +129,7 @@ In `PyElastica`, operations could be inserted using modules such as `ea.Forcing`
 
 `PyElastica-JAX` follows the same concepts and philosophy, but with some simplification and changes according to `JAX`'s pure function pattern. This gives better optimization and amortized compilation for entire JIT timestepping loop.
 
-Use `eaj.Simulator` for the system collection. It always exposes rod-wise `operate`, block-wise `operate_block`, pairwise registration, and Save/Load — unused paths simply register nothing. Classic PyElastica modules (`ea.Forcing`, `ea.Constraints`, …) are not included; keep those on a separate CPU collection when validating against PyElastica.
+Use `eaj.Simulator` for the system collection. An operation to a designated rod could be included using `operate` method.
 
 ```py
 simulator = eaj.Simulator()
@@ -512,6 +512,6 @@ This repository expand the usage of `block` concept directly, along with `JAX`'s
 
 ## Features that are extended from PyElastica
 
-- `eaj.Simulator` includes all
+- `eaj.Simulator` includes the full registration surface, unlike previous `PyElastica` collections that requires to compose mixins or classic modules onto a blank collection.
 - `configure_rod_block(..., inner_block_cls=eaj._CosseratRodVerticalMemoryBlock)`:
   use the stacked-axis rod block for equal-length straight rods.
