@@ -15,10 +15,8 @@ from elastica_jax.io.schema import BLOCKS_GROUP, TARGET_SIMULATOR
 class Hdf5IO:
     """Mixin for simulators: Save/Load all rod blocks into one HDF5 file.
 
-    Mix into the simulator class alongside other JAX mixins::
-
-        class Sim(ea.BaseSystemCollection, eaj.JAXOpsBlock, eaj.Hdf5IO):
-            pass
+    Included on ``eaj.Simulator`` by default. Prefer ``eaj.Simulator`` over
+    mixing this class onto a blank collection.
     """
 
     @property

@@ -21,9 +21,9 @@ import elastica_jax as eaj  # Probably safe to load after jax config update.
 
 JAX-owned pieces live in `elastica_jax`, including:
 
+- `Simulator` — system collection with full JAX registration and Save/Load
 - `configure_rod_block` — block factory for `enable_block_supports`
 - `PositionVerletJAX` — JIT-compiled Position Verlet integrator
-- `JAXOps` / `JAXOpsBlock` — operator registration mixins
 - `NoOpsJax` / `NoBlockOpJax` — operator base templates
 
 ## Execution Model
@@ -31,7 +31,7 @@ JAX-owned pieces live in `elastica_jax`, including:
 The intended workflow is:
 
 1. Create rods with `ea.CosseratRod` as usual.
-2. Build a simulator from `ea.BaseSystemCollection` plus the JAX mixins you need.
+2. Create `eaj.Simulator()` (do not compose capability mixins).
 3. Configure the block with `configure_rod_block`.
 4. Register operators before `finalize()`:
    - rod-local: `simulator.operate(rod).using(OpClass, ...)`
@@ -54,10 +54,7 @@ PyElastica's ``enable_block_supports``, and use that same instance after
 ``finalize()``:
 
 ```python
-class JAXSimulator(ea.BaseSystemCollection, eaj.JAXOpsBlock):
-    pass
-
-simulator = JAXSimulator()
+simulator = eaj.Simulator()
 
 rod_block = eaj.configure_rod_block()
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
@@ -141,16 +138,12 @@ I/O as the recommended collection pattern. See the README data-collection sectio
 
 ## Limitations
 
-### Not All Mixins Are Supported
+### Classic Modules Are Not On `eaj.Simulator`
 
-The JAX path is structured around:
-
-- `ea.BaseSystemCollection`
-- `eaj.JAXOps`
-- `eaj.JAXOpsBlock`
-
-Existing CPU mixins such as `Forcing`, `Damping`, `Constraints`, `Connections`,
-`Contact`, and `CallBacks` are not automatically reusable inside pure JAX rollout.
+The JAX path uses `eaj.Simulator` for registration and Save/Load. Existing CPU
+mixins such as `Forcing`, `Damping`, `Constraints`, `Connections`, `Contact`,
+and `CallBacks` are not included and are not automatically reusable inside pure
+JAX rollout. Keep them on a separate CPU collection when needed.
 
 This is a deliberate restriction of the current implementation, not a bug.
 
@@ -196,14 +189,14 @@ rod_view.external_forces = forces
 
 ## Mixed Rod / Rigid-Body Operators
 
-For coupled rod and rigid-body systems, add `eaj.JAXOpsRodRigidBody` and register with:
+For coupled rod and rigid-body systems, register with:
 
 ```python
 simulator.using_on(rod, sphere).operate(MyCouplingOp, ...)
 ```
 
-This mixin follows the same staged hook model as `JAXOps`, but operators receive both
-rod and rigid-body views.
+Operators receive both rod and rigid-body views through the same staged hook model
+as rod-local operators.
 
 ## Advanced Usage
 
@@ -227,8 +220,8 @@ drop-in acceleration for every existing host-side module.
 | Path | Use |
 | --- | --- |
 | CPU | existing mixins and host load classes |
-| JAX rod-local | `JAXOps` + `NoOpsJax` |
-| JAX many-rod / field ops | `JAXOpsBlock` + `NoBlockOpJax` |
+| JAX rod-local | `eaj.Simulator` + `NoOpsJax` |
+| JAX many-rod / field ops | `eaj.Simulator` + `NoBlockOpJax` |
 
 This keeps the PyElastica setup style intact while allowing pure device-side rollout
 where supported.
