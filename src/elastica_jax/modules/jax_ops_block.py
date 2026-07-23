@@ -398,7 +398,7 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
     def _wrap_local_jax_per_rod_operator(
         cls,
         *,
-        block_system: _CosseratRodMemoryBlock | _MpiCosseratRodBlock,
+        block_system: JAXRodBlockSystem,
         operators: Any | tuple[Any, ...],
     ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
         def apply(state: dict[str, Any], time: Any) -> dict[str, Any]:

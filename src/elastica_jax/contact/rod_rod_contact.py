@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import jax.numpy as jnp
+
 from elastica_jax.contact.rod_rod_kernels import apply_rod_rod_contact_forces
+from elastica_jax.memory_block.memory_block_rod_jax import JAXRodView
+from elastica_jax.operations import JAXTime
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
 
 
@@ -25,13 +31,19 @@ class RodRodContactJax(NoRodRodBlockOpJax):
         k: float,
         nu: float,
         *,
-        _first_system=None,
-        _second_system=None,
+        _first_system: Any = None,
+        _second_system: Any = None,
     ) -> None:
         self.contact_k = k
         self.contact_nu = nu
 
-    def jax_operation(self, rod_one_view, rod_two_view, time):
+    def jax_operation(
+        self,
+        rod_one_view: JAXRodView,
+        rod_two_view: JAXRodView,
+        time: JAXTime,
+    ) -> tuple[JAXRodView, JAXRodView]:
+        del time
         updated_one, updated_two = apply_rod_rod_contact_forces(
             x_one=rod_one_view.position_collection[:, :-1],
             radius_one=rod_one_view.radius,
@@ -47,8 +59,8 @@ class RodRodContactJax(NoRodRodBlockOpJax):
             velocity_two=rod_two_view.velocity_collection,
             internal_forces_two=rod_two_view.internal_forces,
             external_forces_two=rod_two_view.external_forces,
-            contact_k=self.contact_k,
-            contact_nu=self.contact_nu,
+            contact_k=jnp.asarray(self.contact_k),
+            contact_nu=jnp.asarray(self.contact_nu),
         )
         rod_one_view.external_forces = updated_one
         rod_two_view.external_forces = updated_two

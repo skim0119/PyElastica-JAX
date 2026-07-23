@@ -532,9 +532,9 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         self._allocate_blocks_variables_in_voronoi(systems)
         self._allocate_blocks_variables_for_symplectic_stepper(systems)
 
-        _reset_scalar_ghost(self.mass, self.ghost_nodes_idx, 1.0)
-        _reset_scalar_ghost(self.rest_lengths, self.ghost_elems_idx, 1.0)
-        _reset_scalar_ghost(self.rest_voronoi_lengths, self.ghost_voronoi_idx, 1.0)
+        _reset_scalar_ghost(self.mass, self.ghost_nodes_idx, 1.0)  # type: ignore[arg-type]
+        _reset_scalar_ghost(self.rest_lengths, self.ghost_elems_idx, 1.0)  # type: ignore[arg-type]
+        _reset_scalar_ghost(self.rest_voronoi_lengths, self.ghost_voronoi_idx, 1.0)  # type: ignore[arg-type]
 
         _compute_sigma_kappa_for_blockstructure(self)
 
@@ -546,10 +546,12 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
                     system_to_be_added.rest_kappa[:] = system_to_be_added.kappa[:]
 
             _synchronize_periodic_boundary_of_vector_collection(
-                self.rest_sigma, self.periodic_boundary_elems_idx
+                self.rest_sigma,
+                self.periodic_boundary_elems_idx,  # type: ignore[arg-type]
             )
             _synchronize_periodic_boundary_of_vector_collection(
-                self.rest_kappa, self.periodic_boundary_voronoi_idx
+                self.rest_kappa,
+                self.periodic_boundary_voronoi_idx,  # type: ignore[arg-type]
             )
 
         self._device_state: dict[str, jax.Array] = {}
@@ -813,7 +815,8 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
                     attr_name
                 ].copy()
             synchronize_periodic_boundary(
-                self.__dict__[attr_name], periodic_boundary_idx
+                self.__dict__[attr_name],
+                periodic_boundary_idx,  # type: ignore[arg-type]
             )
 
     def _normalize_attr_names(

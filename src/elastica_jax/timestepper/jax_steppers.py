@@ -131,14 +131,14 @@ class PositionVerletJAX:
             simulation_time=simulation_time,
             simulation_dt=simulation_dt,
         )
-        final_time_jax, final_states = compiled_rollout(
+        final_time_jax, rollout_states = compiled_rollout(
             time_jax,
             states,
             dt_jax,
             half_dt_jax,
         )
 
-        for system, state in zip(systems, final_states):
+        for system, state in zip(systems, rollout_states):
             system.jax_set_state(state)
 
         return float(final_time_jax)
@@ -242,10 +242,10 @@ class PositionVerletJAX:
 
         def body_fn(
             step_idx: int,
-            carry,
+            carry: tuple[jax.Array, tuple[JAXPyTree, ...]],
             dt_jax: jax.Array,
             half_dt_jax: jax.Array,
-        ):  # type: ignore[no-untyped-def]
+        ) -> tuple[jax.Array, tuple[JAXPyTree, ...]]:
             return self._body_fn(
                 step_idx,
                 carry,
@@ -294,10 +294,10 @@ class PositionVerletJAX:
 
         def body_fn(
             step_idx: int,
-            carry,
+            carry: tuple[jax.Array, JAXPyTree],
             dt_jax: jax.Array,
             half_dt_jax: jax.Array,
-        ):  # type: ignore[no-untyped-def]
+        ) -> tuple[jax.Array, JAXPyTree]:
             return self._block_body_fn(
                 step_idx,
                 carry,

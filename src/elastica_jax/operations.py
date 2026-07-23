@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 import numpy as np
 import jax.numpy as jnp
@@ -13,6 +13,16 @@ from elastica_jax.memory_block.memory_block_rod_jax import (
 JAXTime: TypeAlias = np.float64
 JAXVectorArray: TypeAlias = np.ndarray
 JAXScalarArray: TypeAlias = np.ndarray
+
+
+class _RodSystemLike(Protocol):
+    """Minimal rod/block surface needed by JAX constraint and damper constructors."""
+
+    position_collection: Any
+    director_collection: Any
+    mass: Any
+    ring_rod_flag: bool
+    inv_mass_second_moment_of_inertia: Any
 
 
 class NoOpsJax:
@@ -55,7 +65,7 @@ class NoOpsJax:
 class OneEndFixedJax(NoOpsJax):
     """JAX equivalent of fixing the first node and first director."""
 
-    def __init__(self, *, _system: object) -> None:
+    def __init__(self, *, _system: _RodSystemLike) -> None:
         self.fixed_position_collection: JAXVectorArray = _system.position_collection[
             ..., 0
         ].copy()
@@ -99,7 +109,7 @@ class EndpointForcesJax(NoOpsJax):
         end_force: JAXVectorArray,
         ramp_up_time: float,
         *,
-        _system: object,
+        _system: _RodSystemLike,
     ) -> None:
         del _system
         assert ramp_up_time > 0.0, "ramp_up_time must be positive."
@@ -136,8 +146,9 @@ class GravityForcesJax(NoOpsJax):
         self,
         *,
         acc_gravity: JAXVectorArray | None = None,
-        _system: object = None,
+        _system: _RodSystemLike | None = None,
     ) -> None:
+        del _system
         if acc_gravity is None:
             acc_gravity = np.array([0.0, -9.80665, 0.0], dtype=np.float64)
         self.acc_gravity = acc_gravity
@@ -157,14 +168,14 @@ class GravityForcesJax(NoOpsJax):
 class AnalyticalLinearDamperJax(NoOpsJax):
     """JAX equivalent of AnalyticalLinearDamper."""
 
-    def __init__(self, time_step: np.float64, **kwargs: object) -> None:
+    def __init__(self, time_step: np.float64, **kwargs: Any) -> None:
         damping_constant = kwargs.get("damping_constant", None)
         uniform_damping_constant = kwargs.get("uniform_damping_constant", None)
         translational_damping_constant = kwargs.get(
             "translational_damping_constant", None
         )
         rotational_damping_constant = kwargs.get("rotational_damping_constant", None)
-        system = kwargs["_system"]
+        system: _RodSystemLike = kwargs["_system"]
 
         provided_params = [
             p
