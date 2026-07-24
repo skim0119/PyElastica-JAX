@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -121,3 +123,52 @@ def test_flatten_rollout_samples_expands_ranks() -> None:
         (2, 4, 8, 0, 0.2),
         (2, 4, 8, 1, 0.3),
     ]
+
+
+@pytest.mark.parametrize("vertical", [False, True])
+def test_mpi_worker_smoke_prints_rollout_walltimes(vertical: bool) -> None:
+    """Tiny two-rank worker smoke (halo CapsuleContact path)."""
+    worker = BENCH_DIR / "jax_rod_contact_mpi_throughput.py"
+    command = [
+        "mpirun",
+        "-n",
+        "2",
+        sys.executable,
+        str(worker),
+        "--backend",
+        "cpu",
+        "--rods-per-rank-exp",
+        "1",
+        "--steps",
+        "2",
+        "--warmup-runs",
+        "0",
+        "--n-elements",
+        "4",
+        "--broad-phase",
+        "all_pairs",
+    ]
+    if vertical:
+        command.append("--vertical")
+    result = subprocess.run(
+        command,
+        cwd=BENCH_DIR.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+            "JAX_ENABLE_X64": "1",
+        },
+    )
+    assert result.returncode == 0, (
+        f"MPI worker smoke failed (vertical={vertical}).\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    walltimes = parse_rollout_walltimes(result.stdout)
+    assert walltimes.shape == (2,)
+    assert np.all(walltimes > 0.0)
