@@ -6,7 +6,6 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -25,10 +24,8 @@ from elastica_jax.memory_block.rod_local_map import RodLocalState  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 
-BenchmarkTiming: TypeAlias = tuple[float, float]
-JAXRodBlock: TypeAlias = (
-    eaj._CosseratRodMemoryBlock | eaj._CosseratRodVerticalMemoryBlock
-)
+type BenchmarkTiming = tuple[float, float]
+type JAXRodBlock = eaj._CosseratRodMemoryBlock | eaj._CosseratRodVerticalMemoryBlock
 
 ROD_LENGTH = 0.35
 ROD_RADIUS = 0.011 * ROD_LENGTH
@@ -99,7 +96,6 @@ class CenterAttractForcesJax(eaj.NoBlockOpJax):
         rod_view: RodLocalState,
         time: np.float64,
     ) -> RodLocalState:
-        del time
         positions = rod_view.position_collection
         center = jnp.asarray(self.center, dtype=positions.dtype)
         delta = center[:, None] - positions
@@ -454,31 +450,3 @@ def run_rollout_pyelastica(
         time_value = stepper.step(simulator, time_value, dt_value)
     rollout_seconds = time.perf_counter() - rollout_start
     return instantiate_seconds, rollout_seconds
-
-
-def mpi_rods_per_rank(
-    *,
-    rods_per_rank_exp: int,
-    rods_per_rank_multiplier: int = 1,
-) -> int:
-    """Return the number of rods owned by one MPI rank in weak scaling."""
-    assert rods_per_rank_exp >= 0, "rods_per_rank_exp must be nonnegative."
-    assert rods_per_rank_multiplier > 0, "rods_per_rank_multiplier must be positive."
-    return rods_per_rank_multiplier * (2**rods_per_rank_exp)
-
-
-def mpi_global_rod_count(
-    *,
-    rods_per_rank_exp: int,
-    comm_size: int,
-    rods_per_rank_multiplier: int = 1,
-) -> int:
-    """Return the weak-scaling global rod count for an MPI world size."""
-    assert comm_size > 0, "comm_size must be positive."
-    return (
-        mpi_rods_per_rank(
-            rods_per_rank_exp=rods_per_rank_exp,
-            rods_per_rank_multiplier=rods_per_rank_multiplier,
-        )
-        * comm_size
-    )
