@@ -107,7 +107,6 @@ def assemble_mpi_halo_kinematics(
         "omega": _allgather_capsules(kinematics["omega"], comm=comm),
         "directors": _allgather_capsules(kinematics["directors"], comm=comm),
         "rod_ids": _allgather_capsules(local_global_rod_ids, comm=comm),
-        "block_element_indices": kinematics["block_element_indices"],
     }
     n_global = n_local * world_size
     capsule_index = jnp.arange(n_global, dtype=jnp.int32)
