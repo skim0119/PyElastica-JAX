@@ -1,10 +1,4 @@
-"""Tests for single-node rod-contact scaling harness helpers.
-
-Public seams:
-- long-form CSV includes backend and vertical layout columns
-- sweep forwards vertical into the rollout callable
-- worker ``run`` dispatches PyElastica and JAX horizontal/vertical cases
-"""
+"""Tests for single-node rod-contact scaling harness helpers."""
 
 from __future__ import annotations
 
@@ -24,7 +18,10 @@ from _rod_contact_scaling_sweep import (  # noqa: E402
     series_label,
     sweep_backend,
 )
-from jax_rod_contact_throughput import run as run_throughput  # noqa: E402
+from jax_rod_contact_throughput import (  # noqa: E402
+    ThroughputConfig,
+    run as run_throughput,
+)
 
 
 def test_series_label_encodes_backend_and_layout() -> None:
@@ -73,34 +70,26 @@ def test_export_scaling_csv_is_long_form_with_vertical(
     assert rows[0]["broad_phase"] == "spatial_hash"
 
 
-def test_sweep_backend_forwards_vertical() -> None:
+def test_sweep_backend_forwards_vertical_through_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen: dict[str, object] = {}
 
-    def _fake_rollout(
-        *,
-        backend: str,
-        n_rods: int,
-        steps: int,
-        warmup_runs: int,
-        n_elements: int,
-        steps_between_detection: int,
-        broad_phase: str,
-        vertical: bool,
-    ) -> tuple[float, float]:
-        seen.update(
-            {
-                "backend": backend,
-                "n_rods": n_rods,
-                "steps": steps,
-                "warmup_runs": warmup_runs,
-                "n_elements": n_elements,
-                "steps_between_detection": steps_between_detection,
-                "broad_phase": broad_phase,
-                "vertical": vertical,
-            }
-        )
+    def _fake_run(*, backend: str, config: ThroughputConfig) -> tuple[float, float]:
+        seen["backend"] = backend
+        seen["vertical"] = config.vertical
+        seen["n_rods"] = config.n_rods
+        seen["broad_phase"] = config.broad_phase
         return 0.01, 0.02
 
+    monkeypatch.setattr(
+        "jax_rod_contact_throughput.run",
+        _fake_run,
+    )
+    monkeypatch.setattr(
+        "_rod_contact_scaling_sweep.run_throughput",
+        _fake_run,
+    )
     points = sweep_backend(
         backend="cpu",
         min_exp=1,
@@ -112,7 +101,6 @@ def test_sweep_backend_forwards_vertical() -> None:
         broad_phase="all_pairs",
         vertical=True,
         verbose=False,
-        run_rollout_fn=_fake_rollout,
     )
     assert points == [(1, 2, 0.01, 0.02)]
     assert seen["backend"] == "cpu"
@@ -125,8 +113,10 @@ def test_throughput_worker_rejects_vertical_pyelastica() -> None:
     with pytest.raises(AssertionError, match="vertical"):
         run_throughput(
             backend="pyelastica",
-            n_rods_exp=1,
-            steps=1,
-            warmup_runs=0,
-            vertical=True,
+            config=ThroughputConfig(
+                n_rods_exp=1,
+                steps=1,
+                warmup_runs=0,
+                vertical=True,
+            ),
         )

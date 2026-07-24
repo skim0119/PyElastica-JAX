@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import csv
-import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import click
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from _rod_contact_common import N_ELEMENTS, run_rollout
+from _rod_contact_common import N_ELEMENTS
+from jax_rod_contact_throughput import ThroughputConfig, run as run_throughput
 
 type SweepPoint = tuple[int, int, float, float]
-type RunRolloutFn = Callable[..., tuple[float, float]]
 
 
 @dataclass(frozen=True)
@@ -29,6 +27,7 @@ class ScalingCase:
 
     @property
     def label(self) -> str:
+        """Return the plot legend label for this backend and layout."""
         return series_label(self.backend, vertical=self.vertical)
 
 
@@ -53,9 +52,8 @@ def sweep_backend(
     broad_phase: str = "spatial_hash",
     vertical: bool = False,
     verbose: bool,
-    run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> list[SweepPoint]:
-    """Time rollouts for ``n_rods = 2**exp`` across an exponent range."""
+    """Time rollouts for ``n_rods = 2**exp`` via the throughput worker."""
     assert min_exp >= 0, "min exponent must be nonnegative."
     assert max_exp >= min_exp, "max exponent must be >= min exponent."
 
@@ -66,29 +64,25 @@ def sweep_backend(
         desc=f"{label} rod-rod contact",
         disable=not verbose,
     ):
-        n_rods = 2**exponent
-        run_kwargs: dict[str, object] = {
-            "n_rods": n_rods,
-            "steps": steps,
-            "warmup_runs": warmup_runs,
-            "n_elements": n_elements,
-        }
-        rollout_params = inspect.signature(run_rollout_fn).parameters
-        if "backend" in rollout_params:
-            run_kwargs["backend"] = backend
-        if "steps_between_detection" in rollout_params:
-            run_kwargs["steps_between_detection"] = steps_between_detection
-        if "broad_phase" in rollout_params:
-            run_kwargs["broad_phase"] = broad_phase
-        if "vertical" in rollout_params:
-            run_kwargs["vertical"] = vertical
-        instantiate_seconds, rollout_seconds = run_rollout_fn(**run_kwargs)
+        config = ThroughputConfig(
+            n_rods_exp=exponent,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            n_elements=n_elements,
+            steps_between_detection=steps_between_detection,
+            broad_phase=broad_phase,
+            vertical=vertical,
+        )
+        instantiate_seconds, rollout_seconds = run_throughput(
+            backend=backend,
+            config=config,
+        )
         print(
-            f"{label} n_rods={n_rods} (2^{exponent}): "
+            f"{label} n_rods={config.n_rods} (2^{exponent}): "
             f"instantiate={instantiate_seconds:.3f}s "
             f"rollout={rollout_seconds:.6f}s"
         )
-        results.append((exponent, n_rods, instantiate_seconds, rollout_seconds))
+        results.append((exponent, config.n_rods, instantiate_seconds, rollout_seconds))
     return results
 
 
@@ -181,7 +175,6 @@ def run_scaling_benchmark(
     output_plot: Path,
     output_csv: Path | None,
     verbose: bool,
-    run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> None:
     """Run one backend/layout sweep and export CSV + plot."""
     points = sweep_backend(
@@ -195,7 +188,6 @@ def run_scaling_benchmark(
         broad_phase=broad_phase,
         vertical=vertical,
         verbose=verbose,
-        run_rollout_fn=run_rollout_fn,
     )
     cases = [ScalingCase(backend=backend, vertical=vertical, points=points)]
     csv_path = output_csv if output_csv is not None else output_plot.with_suffix(".csv")
@@ -219,7 +211,6 @@ def scaling_cli(
     backend: str,
     default_plot: str,
     *,
-    run_rollout_fn: RunRolloutFn = run_rollout,
     allow_vertical: bool = True,
 ) -> click.Command:
     """Return a click command configured for one backend."""
@@ -292,7 +283,6 @@ def scaling_cli(
             output_plot=output,
             output_csv=csv_output,
             verbose=not quiet,
-            run_rollout_fn=run_rollout_fn,
         )
 
     return main

@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
 import jax
 
-from _rod_contact_common import N_ELEMENTS, run_rollout, run_rollout_pyelastica
+from _rod_contact_common import N_ELEMENTS
 from _rod_contact_scaling_sweep import (
-    RunRolloutFn,
     ScalingCase,
     export_scaling_csv,
     export_scaling_plot,
     sweep_backend,
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SweepRange:
+    """Exponent range and shared timing knobs for one backend/layout sweep."""
+
+    min_exp: int
+    max_exp: int
+    steps: int
+    warmup_runs: int
+    n_elements: int
+    steps_between_detection: int
+    broad_phase: str
+    verbose: bool
 
 
 def _backend_available(name: str) -> bool:
@@ -24,35 +38,25 @@ def _backend_available(name: str) -> bool:
         return False
 
 
-def _append_case(
-    cases: list[ScalingCase],
+def _collect_case(
     *,
     backend: str,
     vertical: bool,
-    min_exp: int,
-    max_exp: int,
-    steps: int,
-    warmup_runs: int,
-    n_elements: int,
-    steps_between_detection: int,
-    broad_phase: str,
-    verbose: bool,
-    run_rollout_fn: RunRolloutFn,
-) -> None:
+    sweep: SweepRange,
+) -> ScalingCase:
     points = sweep_backend(
         backend=backend,
-        min_exp=min_exp,
-        max_exp=max_exp,
-        steps=steps,
-        warmup_runs=warmup_runs,
-        n_elements=n_elements,
-        steps_between_detection=steps_between_detection,
-        broad_phase=broad_phase,
+        min_exp=sweep.min_exp,
+        max_exp=sweep.max_exp,
+        steps=sweep.steps,
+        warmup_runs=sweep.warmup_runs,
+        n_elements=sweep.n_elements,
+        steps_between_detection=sweep.steps_between_detection,
+        broad_phase=sweep.broad_phase,
         vertical=vertical,
-        verbose=verbose,
-        run_rollout_fn=run_rollout_fn,
+        verbose=sweep.verbose,
     )
-    cases.append(ScalingCase(backend=backend, vertical=vertical, points=points))
+    return ScalingCase(backend=backend, vertical=vertical, points=points)
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -170,7 +174,6 @@ def main(
     )
 
     cases: list[ScalingCase] = []
-    verbose = not quiet
     pyelastica_min = min_exp if pyelastica_min_exp is None else pyelastica_min_exp
     pyelastica_max = max_exp if pyelastica_max_exp is None else pyelastica_max_exp
     cpu_min = min_exp if cpu_min_exp is None else cpu_min_exp
@@ -184,56 +187,56 @@ def main(
         jax_layouts.append(True)
 
     if not skip_pyelastica:
-        _append_case(
-            cases,
-            backend="pyelastica",
-            vertical=False,
-            min_exp=pyelastica_min,
-            max_exp=pyelastica_max,
+        cases.append(
+            _collect_case(
+                backend="pyelastica",
+                vertical=False,
+                sweep=SweepRange(
+                    min_exp=pyelastica_min,
+                    max_exp=pyelastica_max,
+                    steps=steps,
+                    warmup_runs=warmup_runs,
+                    n_elements=n_elements,
+                    steps_between_detection=steps_between_detection,
+                    broad_phase=broad_phase,
+                    verbose=not quiet,
+                ),
+            )
+        )
+
+    if not skip_cpu:
+        cpu_sweep = SweepRange(
+            min_exp=cpu_min,
+            max_exp=cpu_max,
             steps=steps,
             warmup_runs=warmup_runs,
             n_elements=n_elements,
             steps_between_detection=steps_between_detection,
             broad_phase=broad_phase,
-            verbose=verbose,
-            run_rollout_fn=run_rollout_pyelastica,
+            verbose=not quiet,
         )
-
-    if not skip_cpu:
         for vertical in jax_layouts:
-            _append_case(
-                cases,
-                backend="cpu",
-                vertical=vertical,
-                min_exp=cpu_min,
-                max_exp=cpu_max,
-                steps=steps,
-                warmup_runs=warmup_runs,
-                n_elements=n_elements,
-                steps_between_detection=steps_between_detection,
-                broad_phase=broad_phase,
-                verbose=verbose,
-                run_rollout_fn=run_rollout,
+            cases.append(
+                _collect_case(backend="cpu", vertical=vertical, sweep=cpu_sweep)
             )
 
     if not skip_gpu:
         if not _backend_available("cuda"):
             print("cuda unavailable: skipping jax-cuda sweeps")
         else:
+            gpu_sweep = SweepRange(
+                min_exp=gpu_min,
+                max_exp=gpu_max,
+                steps=steps,
+                warmup_runs=warmup_runs,
+                n_elements=n_elements,
+                steps_between_detection=steps_between_detection,
+                broad_phase=broad_phase,
+                verbose=not quiet,
+            )
             for vertical in jax_layouts:
-                _append_case(
-                    cases,
-                    backend="cuda",
-                    vertical=vertical,
-                    min_exp=gpu_min,
-                    max_exp=gpu_max,
-                    steps=steps,
-                    warmup_runs=warmup_runs,
-                    n_elements=n_elements,
-                    steps_between_detection=steps_between_detection,
-                    broad_phase=broad_phase,
-                    verbose=verbose,
-                    run_rollout_fn=run_rollout,
+                cases.append(
+                    _collect_case(backend="cuda", vertical=vertical, sweep=gpu_sweep)
                 )
 
     assert cases, "No scaling cases were collected."

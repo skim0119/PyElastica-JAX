@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import click
 
 from _rod_contact_common import (
@@ -12,67 +14,63 @@ from _rod_contact_common import (
 )
 
 
-def run(
-    *,
-    backend: str,
-    n_rods_exp: int,
-    steps: int,
-    warmup_runs: int,
-    vertical: bool = False,
-    n_elements: int = N_ELEMENTS,
-    steps_between_detection: int = STEPS_BETWEEN_DETECTION,
-    broad_phase: str = "spatial_hash",
-) -> tuple[float, float]:
+@dataclass(frozen=True, kw_only=True)
+class ThroughputConfig:
+    """Fixed knobs for one rod-contact throughput sample."""
+
+    n_rods_exp: int
+    steps: int
+    warmup_runs: int
+    n_elements: int = N_ELEMENTS
+    steps_between_detection: int = STEPS_BETWEEN_DETECTION
+    broad_phase: str = "spatial_hash"
+    vertical: bool = False
+
+    @property
+    def n_rods(self) -> int:
+        """Return ``2 ** n_rods_exp``."""
+        assert self.n_rods_exp >= 0, "n_rods_exp must be nonnegative."
+        return 2**self.n_rods_exp
+
+
+def run(*, backend: str, config: ThroughputConfig) -> tuple[float, float]:
     """Time one rod-contact rollout for a backend and layout.
 
     Parameters
     ----------
     backend :
         ``"pyelastica"``, ``"cpu"``, or ``"cuda"``.
-    n_rods_exp :
-        Rod count is ``2 ** n_rods_exp``.
-    steps :
-        Timed Position Verlet steps.
-    warmup_runs :
-        Warmup integrate chunks before timing.
-    vertical :
-        Use stacked vertical JAX rod blocks. Invalid for PyElastica.
-    n_elements :
-        Elements per rod.
-    steps_between_detection :
-        Broad-phase refresh interval for JAX capsule contact.
-    broad_phase :
-        JAX capsule broad-phase strategy.
+    config :
+        Rod count exponent, timing, layout, and contact knobs.
 
     Returns
     -------
     tuple[float, float]
         Instantiation seconds and rollout wall time seconds.
     """
-    assert n_rods_exp >= 0, "n_rods_exp must be nonnegative."
-    n_rods = 2**n_rods_exp
+    n_rods = config.n_rods
     match backend:
         case "pyelastica":
-            assert not vertical, "PyElastica does not support vertical layout."
+            assert not config.vertical, "PyElastica does not support vertical layout."
             return run_rollout_pyelastica(
                 n_rods=n_rods,
-                steps=steps,
-                warmup_runs=warmup_runs,
-                n_elements=n_elements,
+                steps=config.steps,
+                warmup_runs=config.warmup_runs,
+                n_elements=config.n_elements,
             )
         case "cpu" | "cuda":
             return run_rollout(
                 backend=backend,
                 n_rods=n_rods,
-                steps=steps,
-                warmup_runs=warmup_runs,
-                n_elements=n_elements,
-                steps_between_detection=steps_between_detection,
-                broad_phase=broad_phase,
-                vertical=vertical,
+                steps=config.steps,
+                warmup_runs=config.warmup_runs,
+                n_elements=config.n_elements,
+                steps_between_detection=config.steps_between_detection,
+                broad_phase=config.broad_phase,
+                vertical=config.vertical,
             )
         case _:
-            raise AssertionError(f"Unsupported backend {backend!r}.")
+            assert False, f"Unsupported backend {backend!r}."
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
@@ -115,19 +113,22 @@ def main(
     vertical: bool,
 ) -> None:
     """Run one rod-contact throughput sample and print timings."""
-    instantiate_seconds, rollout_seconds = run(
-        backend=backend.lower(),
+    config = ThroughputConfig(
         n_rods_exp=n_rods_exp,
         steps=steps,
         warmup_runs=warmup_runs,
-        vertical=vertical,
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
         broad_phase=broad_phase,
+        vertical=vertical,
+    )
+    instantiate_seconds, rollout_seconds = run(
+        backend=backend.lower(),
+        config=config,
     )
     print(f"backend={backend.lower()}")
     print(f"vertical={int(vertical)}")
-    print(f"n_rods={2**n_rods_exp}")
+    print(f"n_rods={config.n_rods}")
     print(f"instantiate_s={instantiate_seconds:.6f}")
     print(f"rollout_walltime={rollout_seconds:.6f}")
 
