@@ -1,19 +1,12 @@
-"""Vertical (stacked) block support for capsule contact.
-
-Seams under test (issue 01):
-- ``build_block_capsule_metadata`` / ``install_capsule_contact_state`` /
-  ``capsule_kinematics_from_block_state`` accept a stacked vertical block
-- ``CapsuleContactOp`` on a vertical block matches packed horizontal forces
-- Vertical single-device rollout can register ``CapsuleContactOp``
-"""
+"""Tests for capsule contact on stacked (vertical) Cosserat rod blocks."""
 
 from __future__ import annotations
 
+import jax
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
 import elastica as ea  # noqa: E402

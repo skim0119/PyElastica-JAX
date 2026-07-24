@@ -46,12 +46,16 @@ def scatter_element_loads(
 
     Parameters
     ----------
-    external_forces, external_torques :
-        Packed ``(3, ...)`` or stacked ``(n_rods, 3, ...)`` load arrays.
+    external_forces :
+        Packed ``(3, ...)`` or stacked ``(n_rods, 3, ...)`` force array.
+    external_torques :
+        Packed ``(3, ...)`` or stacked ``(n_rods, 3, ...)`` torque array.
     element_indices :
         Packed global element indices, or stacked local element indices.
-    force, torque_world :
-        Per-capsule world-frame loads with shape ``(n_capsules, 3)``.
+    force :
+        Per-capsule world-frame forces with shape ``(n_capsules, 3)``.
+    torque_world :
+        Per-capsule world-frame torques with shape ``(n_capsules, 3)``.
     directors :
         Per-capsule directors with shape ``(n_capsules, 3, 3)``.
     rod_ids :
