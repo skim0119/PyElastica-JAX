@@ -217,8 +217,17 @@ def apply_capsule_pair_forces(
     static_velocity_threshold: float = 1.0,
     friction_gate: float | jax.Array = 1.0,
     rod_ids: jax.Array | None = None,
+    owned_mask: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Fine-phase capsule contact on a bounded active pair list."""
+    """Fine-phase capsule contact on a bounded active pair list.
+
+    Parameters
+    ----------
+    owned_mask :
+        Optional per-capsule boolean mask. When provided, forces and torques on
+        capsules where the mask is False are zeroed before scatter so ghost
+        capsules can participate in pair detection without writing local loads.
+    """
     first = pair_first
     second = pair_second
     active_pair = pair_active & (first >= 0) & (second >= 0)
@@ -277,6 +286,10 @@ def apply_capsule_pair_forces(
     t1 = jnp.zeros_like(centers).at[first].add(jnp.cross(arm1, force))
     t2 = jnp.zeros_like(centers).at[second].add(jnp.cross(arm2, -force))
     total_force, total_torque = f1 + f2, t1 + t2
+    if owned_mask is not None:
+        owned = owned_mask.astype(total_force.dtype)[:, None]
+        total_force = total_force * owned
+        total_torque = total_torque * owned
     return (
         *scatter_element_loads(
             external_forces,
