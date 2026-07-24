@@ -14,6 +14,7 @@ from elastica_jax.contact.spatial_hash import (
     estimate_all_cross_rod_pairs,
     estimate_max_pairs,
 )
+from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
 
 CONTACT_STATE_PAIR_FIRST = "capsule_contact_pair_first"
 CONTACT_STATE_PAIR_SECOND = "capsule_contact_pair_second"
@@ -218,7 +219,17 @@ def install_capsule_contact_state(
     When the block exposes ``device_put`` (including multi-device vertical
     blocks), buffers are placed with the block's sharding so replicated
     contact state stays compatible with rod-sharded kinematics.
+
+    MPI rod blocks inflate ``max_pairs`` for the world-wide capsule count so
+    buffers match ``CapsuleContactOp`` after halo allgather.
     """
+    # Local import avoids a circular import with mpi_halo → capsule_metadata.
+    from elastica_jax.contact.mpi_halo import inflate_capsule_metadata_for_mpi
+
+    if isinstance(block, _MpiCosseratRodBlock):
+        metadata = inflate_capsule_metadata_for_mpi(
+            metadata, world_size=int(block.comm_size)
+        )
     host_state = _host_capsule_contact_state(metadata, dtype=dtype)
     put = getattr(block, "device_put", None)
     if put is not None:
