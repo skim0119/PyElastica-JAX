@@ -383,13 +383,14 @@ def run_rollout(
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
     )
+    if n_devices > 1:
+        assert vertical, "n_devices > 1 requires vertical=True."
     devices = eaj.resolve_backend_devices(backend)
     assert n_devices <= len(devices), (
         f"Requested n_devices={n_devices} but backend {backend!r} has "
         f"{len(devices)} device(s)."
     )
     if n_devices > 1:
-        assert vertical, "n_devices > 1 requires vertical=True."
         device: jax.Device | Sequence[jax.Device] = devices[:n_devices]
         primary = devices[0]
     else:
