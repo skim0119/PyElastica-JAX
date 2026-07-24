@@ -111,6 +111,8 @@ def _distinct_cosserat_rod_types() -> tuple[type[ea.CosseratRod], type[ea.Cosser
 def _configure_jax_block_operators(
     simulator: eaj.Simulator,
     rod_blocks: Sequence[JAXRodBlock],
+    *,
+    rest_lengths: np.ndarray,
 ) -> None:
     b_coeff = default_b_coeff()
     period = DEFAULT_PERIOD
@@ -118,14 +120,13 @@ def _configure_jax_block_operators(
         period * period * np.abs(DEFAULT_GRAVITY) * DEFAULT_FROUDE
     )
     kinetic_mu_array = np.array([mu, 1.5 * mu, 2.0 * mu], dtype=np.float64)
-    static_mu_array = np.zeros(kinetic_mu_array.shape, dtype=np.float64)
 
     for rod_block in rod_blocks:
         simulator.operate_block(rod_block).using(
             SnakeMuscleTorquesBlockJax,
+            rest_lengths=rest_lengths,
             b_coeff=b_coeff,
             period=period,
-            base_length=DEFAULT_BASE_LENGTH,
         )
         simulator.operate_block(rod_block).using(
             GravityPlaneContactBlockJax,
@@ -136,7 +137,6 @@ def _configure_jax_block_operators(
             slip_velocity_tol=1.0e-8,
             k=1.0,
             nu=1.0e-6,
-            static_mu_array=static_mu_array,
             kinetic_mu_array=kinetic_mu_array,
         )
         simulator.operate_block(rod_block).using(
@@ -235,11 +235,17 @@ def build_jax_sim(
 
     sim = eaj.Simulator()
     sim.enable_block_supports(ea.CosseratRod, rod_block)
+    template_rest_lengths: np.ndarray | None = None
     for _ in range(n_snakes):
         rod = build_rod()
+        if template_rest_lengths is None:
+            template_rest_lengths = rod.rest_lengths
         sim.append(rod)
 
-    _configure_jax_block_operators(sim, (rod_block,))
+    assert template_rest_lengths is not None
+    _configure_jax_block_operators(
+        sim, (rod_block,), rest_lengths=template_rest_lengths
+    )
     sim.finalize()
 
     return sim, rod_block
@@ -271,13 +277,20 @@ def build_jax_sim_gpu2x(
     simulator.enable_block_supports(second_rod_type, rod_blocks[1])
 
     first_block_count = (n_snakes + 1) // 2
+    template_rest_lengths: np.ndarray | None = None
     for snake_index in range(n_snakes):
         rod_type = (
             first_rod_type if snake_index < first_block_count else second_rod_type
         )
-        simulator.append(build_rod(rod_type))
+        rod = build_rod(rod_type)
+        if template_rest_lengths is None:
+            template_rest_lengths = rod.rest_lengths
+        simulator.append(rod)
 
-    _configure_jax_block_operators(simulator, rod_blocks)
+    assert template_rest_lengths is not None
+    _configure_jax_block_operators(
+        simulator, rod_blocks, rest_lengths=template_rest_lengths
+    )
     simulator.finalize()
     return simulator, rod_blocks
 
@@ -583,10 +596,19 @@ def build_jax_sim_mpi(
     )
     simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
+    template_rest_lengths: np.ndarray | None = None
     for snake_index in range(n_snakes_total):
         if rod_block.owns_rod(snake_index):
-            simulator.append(build_rod())
-    _configure_jax_block_operators(simulator, (rod_block,))
+            rod = build_rod()
+            if template_rest_lengths is None:
+                template_rest_lengths = rod.rest_lengths
+            simulator.append(rod)
+    assert template_rest_lengths is not None, (
+        "MPI rank owns no rods; cannot configure muscle rest_lengths."
+    )
+    _configure_jax_block_operators(
+        simulator, (rod_block,), rest_lengths=template_rest_lengths
+    )
     simulator.finalize()
     return simulator, rod_block
 

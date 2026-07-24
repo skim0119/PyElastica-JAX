@@ -4,57 +4,44 @@ from __future__ import annotations
 
 import numpy as np
 
-import elastica as ea
 import elastica_jax as eaj
+from elastica.utils import _bspline
 
 import jax
 import jax.numpy as jnp
 
+from elastica_jax.memory_block.rod_local_map import RodLocalState
 from elastica_jax._linalg import _jax_batch_cross, _jax_batch_matvec
 
 
 class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
-    """Muscle torques on one rod-shaped block state.
-
-    Author against a single rod's arrays (``(3, N)``, etc.). The simulator
-    backend batches across rods with ``vmap`` (and gather/scatter when the
-    block is packed horizontally).
-    """
+    """Muscle torques on one rod; Block.map_rods batches across the Block."""
 
     def __init__(
         self,
         *,
+        rest_lengths: np.ndarray,
         b_coeff: np.ndarray,
         period: float,
-        base_length: float,
-        _system,
+        **kwargs: object,
     ) -> None:
-        template_rod = _system._systems[0]
-        template = ea.MuscleTorques(
-            base_length=base_length,
-            b_coeff=b_coeff[:-1],
-            period=period,
-            wave_number=2.0 * np.pi / float(b_coeff[-1]),
-            phase_shift=0.0,
-            direction=np.array([0.0, 1.0, 0.0]),
-            rest_lengths=template_rod.rest_lengths,
-            ramp_up_time=period,
-            with_spline=True,
-        )
+        s = np.cumsum(rest_lengths)
+        s /= s[-1]
+        spline_fn, _, _ = _bspline(b_coeff[:-1])
+        self.spline = spline_fn(s)
+        self.s = s
         self.direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-        self.s = template.s
-        self.spline = template.my_spline
         self.angular_frequency = 2.0 * np.pi / period
         self.wave_number = 2.0 * np.pi / float(b_coeff[-1])
         self.phase_shift = 0.0
         self.ramp_up_time = period
 
-    def jax_block_operate_synchronize(
+    def jax_per_rod_operate_synchronize(
         self,
-        state: dict[str, jax.Array],
+        rod_view: RodLocalState,
         time: np.float64,
-    ) -> dict[str, jax.Array]:
-        directors = state["director_collection"]
+    ) -> RodLocalState:
+        directors = rod_view.director_collection
         factor = jnp.minimum(1.0, time / self.ramp_up_time)
         torque_mag = (
             factor
@@ -67,21 +54,16 @@ class SnakeMuscleTorquesBlockJax(eaj.NoBlockOpJax):
         )
         torque_local = self.direction[:, None] * torque_mag[::-1][None, :]
         torque_world = _jax_batch_matvec(directors, torque_local)
-        external_torques = state["external_torques"]
+        external_torques = rod_view.external_torques
         external_torques = external_torques.at[:, 1:].add(torque_world[:, 1:])
         previous_world = _jax_batch_matvec(directors[:, :, :-1], torque_local[:, 1:])
         external_torques = external_torques.at[:, :-1].add(-previous_world)
-        updated = dict(state)
-        updated["external_torques"] = external_torques
-        return updated
+        rod_view.external_torques = external_torques
+        return rod_view
 
 
 class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
-    """Gravity and plane contact on one rod-shaped block state.
-
-    Batched across rods by the simulator backend (see
-    :class:`SnakeMuscleTorquesBlockJax`).
-    """
+    """Gravity and plane contact on one rod; Block.map_rods batches across rods."""
 
     def __init__(
         self,
@@ -92,8 +74,7 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         k: float,
         nu: float,
         kinetic_mu_array: np.ndarray,
-        static_mu_array: np.ndarray,
-        _system,
+        **kwargs: object,
     ) -> None:
         self.plane_origin = plane_origin
         self.plane_normal = plane_normal
@@ -106,21 +87,21 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
         self.kinetic_mu_backward = kinetic_mu_array[1]
         self.kinetic_mu_sideways = kinetic_mu_array[2]
 
-    def jax_block_operate_synchronize(
+    def jax_per_rod_operate_synchronize(
         self,
-        state: dict[str, jax.Array],
-        time: np.float64,
-    ) -> dict[str, jax.Array]:
-        position = state["position_collection"]
-        velocity = state["velocity_collection"]
-        mass = state["mass"]
-        radius = state["radius"]
-        tangents = state["tangents"]
-        directors = state["director_collection"]
-        omegas = state["omega_collection"]
-        internal_forces = state["internal_forces"]
-        external_forces = state["external_forces"]
-        external_torques = state["external_torques"]
+        rod_view: RodLocalState,
+        _time: np.float64,
+    ) -> RodLocalState:
+        position = rod_view.position_collection
+        velocity = rod_view.velocity_collection
+        mass = rod_view.mass
+        radius = rod_view.radius
+        tangents = rod_view.tangents
+        directors = rod_view.director_collection
+        omegas = rod_view.omega_collection
+        internal_forces = rod_view.internal_forces
+        external_forces = rod_view.external_forces
+        external_torques = rod_view.external_torques
 
         external_forces = external_forces + self.gravity[:, None] * mass
 
@@ -267,10 +248,9 @@ class GravityPlaneContactBlockJax(eaj.NoBlockOpJax):
             ),
         )
 
-        updated = dict(state)
-        updated["external_forces"] = external_forces
-        updated["external_torques"] = external_torques
-        return updated
+        rod_view.external_forces = external_forces
+        rod_view.external_torques = external_torques
+        return rod_view
 
 
 def _node_to_element_position(position_collection: jax.Array) -> jax.Array:
