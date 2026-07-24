@@ -9,11 +9,8 @@
 
 # Multi-node rod-rod contact weak scaling: one GPU per node.
 # Emits separate CSV/PNG for horizontal and vertical layouts.
-#
-# Review-only until package blockers land:
-# - ticket 05: MPI halo CapsuleContact (cross-rank coupling)
-# - ticket 01: vertical CapsuleContact (stacked layout kinematics)
-# Until then, timings measure rank-local contact and vertical may fail.
+# Uses MPI ranks with halo CapsuleContact (HALO_READ) so contact stays coupled.
+# Copy this script into the job folder and edit REPO_ROOT / partition as needed.
 
 set -euo pipefail
 
