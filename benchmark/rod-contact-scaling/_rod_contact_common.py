@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -187,8 +188,8 @@ def _install_capsule_contact(
     rod_block: JAXRodBlock,
     config: ContactScalingConfig,
     *,
-    device: jax.Device,
     broad_phase: str,
+    device: jax.Device | None = None,
 ) -> None:
     """Install capsule contact state after finalize for packed or stacked blocks."""
     metadata = eaj.build_block_capsule_metadata(
@@ -207,17 +208,34 @@ def _install_capsule_contact(
 def build_simulation(
     config: ContactScalingConfig,
     *,
-    device: jax.Device,
+    device: jax.Device | Sequence[jax.Device],
     broad_phase: str = "spatial_hash",
     vertical: bool = False,
 ) -> tuple[eaj.Simulator, JAXRodBlock]:
-    """Build a rod block with center attraction and rod-rod contact only."""
+    """Build a rod block with center attraction and rod-rod contact only.
+
+    Pass a device sequence with ``vertical=True`` to shard one stacked block
+    across multiple devices (single-node multi-GPU vertical path).
+    """
+    if isinstance(device, Sequence) and not isinstance(device, (str, bytes)):
+        devices = tuple(device)
+        assert devices, "device sequence must be non-empty."
+        assert vertical, "Multi-device rod-contact requires vertical=True."
+        assert config.n_rods % len(devices) == 0, (
+            "n_rods must be divisible by the number of devices for vertical sharding."
+        )
+        block_device: jax.Device | Sequence[jax.Device] = devices
+        primary = devices[0]
+    else:
+        block_device = device
+        primary = device
+
     simulator = eaj.Simulator()
     inner_block_cls = (
         eaj._CosseratRodVerticalMemoryBlock if vertical else eaj._CosseratRodMemoryBlock
     )
     rod_block = eaj.configure_rod_block(
-        device=device,
+        device=block_device,
         inner_block_cls=inner_block_cls,
     )
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
@@ -229,7 +247,7 @@ def build_simulation(
         simulator, rod_block, config, broad_phase=broad_phase
     )
     simulator.finalize()
-    _install_capsule_contact(rod_block, config, device=device, broad_phase=broad_phase)
+    _install_capsule_contact(rod_block, config, broad_phase=broad_phase, device=primary)
     return simulator, rod_block
 
 
@@ -353,19 +371,32 @@ def run_rollout(
     steps_between_detection: int = STEPS_BETWEEN_DETECTION,
     broad_phase: str = "spatial_hash",
     vertical: bool = False,
+    n_devices: int = 1,
 ) -> BenchmarkTiming:
     """Build the simulator and time a fixed-length Position Verlet rollout."""
     assert steps > 0, "steps must be positive."
     assert warmup_runs >= 0, "warmup_runs must be nonnegative."
+    assert n_devices >= 1, "n_devices must be positive."
 
     config = ContactScalingConfig(
         n_rods=n_rods,
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
     )
-    device = eaj.resolve_backend_devices(backend)[0]
+    devices = eaj.resolve_backend_devices(backend)
+    assert n_devices <= len(devices), (
+        f"Requested n_devices={n_devices} but backend {backend!r} has "
+        f"{len(devices)} device(s)."
+    )
+    if n_devices > 1:
+        assert vertical, "n_devices > 1 requires vertical=True."
+        device: jax.Device | Sequence[jax.Device] = devices[:n_devices]
+        primary = devices[0]
+    else:
+        device = devices[0]
+        primary = device
 
-    with jax.default_device(device):
+    with jax.default_device(primary):
         instantiate_start = time.perf_counter()
         simulator, rod_block = build_simulation(
             config,
