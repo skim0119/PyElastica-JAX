@@ -174,6 +174,9 @@ class CapsuleContactOp(NoBlockOpJax):
     rod-rod contact registration style. Both paths run as pure JAX on the
     block device.
 
+    On a multi-device vertical block, kinematics are gathered across the rod
+    mesh so contact pairs that span device shards remain physically coupled.
+
     By default the contact is the linear normal-spring/damper law. Optional
     arguments enable a Hertzian ``gamma^1.5`` normal law (``hertzian=True``), a
     time-ramped soft-to-hard stiffness (``contact_stiffness_initial`` /
