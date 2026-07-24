@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +28,11 @@ from elastica_jax.memory_block.rod_local_map import RodLocalState  # noqa: E402
 jax.config.update("jax_enable_x64", True)
 
 type BenchmarkTiming = tuple[float, float]
-type JAXRodBlock = eaj._CosseratRodMemoryBlock | eaj._CosseratRodVerticalMemoryBlock
+type JAXRodBlock = (
+    eaj._CosseratRodMemoryBlock
+    | eaj._CosseratRodVerticalMemoryBlock
+    | eaj._MpiCosseratRodBlock
+)
 
 ROD_LENGTH = 0.35
 ROD_RADIUS = 0.011 * ROD_LENGTH
@@ -482,3 +488,129 @@ def run_rollout_pyelastica(
         time_value = stepper.step(simulator, time_value, dt_value)
     rollout_seconds = time.perf_counter() - rollout_start
     return instantiate_seconds, rollout_seconds
+
+
+def mpi_rods_per_rank(
+    *,
+    rods_per_rank_exp: int,
+    rods_per_rank_multiplier: int = 1,
+) -> int:
+    """Return the number of rods owned by one MPI rank in weak scaling."""
+    assert rods_per_rank_exp >= 0, "rods_per_rank_exp must be nonnegative."
+    assert rods_per_rank_multiplier > 0, "rods_per_rank_multiplier must be positive."
+    return rods_per_rank_multiplier * (2**rods_per_rank_exp)
+
+
+def mpi_global_rod_count(
+    *,
+    rods_per_rank_exp: int,
+    comm_size: int,
+    rods_per_rank_multiplier: int = 1,
+) -> int:
+    """Return the weak-scaling global rod count for an MPI world size."""
+    assert comm_size > 0, "comm_size must be positive."
+    return (
+        mpi_rods_per_rank(
+            rods_per_rank_exp=rods_per_rank_exp,
+            rods_per_rank_multiplier=rods_per_rank_multiplier,
+        )
+        * comm_size
+    )
+
+
+def resolve_mpi_block_device(*, backend: str, comm: Any) -> jax.Device:
+    """Return the JAX device for one MPI rank's local rod block."""
+    devices = eaj.resolve_backend_devices(backend)
+    if backend == "cpu":
+        return devices[0]
+    local_rank = int(os.environ.get("SLURM_LOCALID", comm.Get_rank()))
+    return devices[local_rank % len(devices)]
+
+
+def build_simulation_mpi(
+    config: ContactScalingConfig,
+    *,
+    comm: Any,
+    backend: str,
+    vertical: bool = False,
+    broad_phase: str = "spatial_hash",
+) -> tuple[eaj.Simulator, eaj._MpiCosseratRodBlock]:
+    """Build ring rods distributed across MPI ranks with halo capsule contact."""
+    device = resolve_mpi_block_device(backend=backend, comm=comm)
+    inner_block_cls = (
+        eaj._CosseratRodVerticalMemoryBlock if vertical else eaj._CosseratRodMemoryBlock
+    )
+    rod_block = eaj.configure_rod_block_mpi(
+        comm=comm,
+        device=device,
+        device_dtype=np.dtype(np.float64),
+        inner_block_cls=inner_block_cls,
+    )
+    simulator = eaj.Simulator()
+    simulator.enable_block_supports(ea.CosseratRod, rod_block)
+
+    for rod_idx in range(config.n_rods):
+        if rod_block.owns_rod(rod_idx):
+            simulator.append(make_ring_rod(config, rod_idx=rod_idx))
+
+    _configure_jax_block_operators(
+        simulator, rod_block, config, broad_phase=broad_phase
+    )
+    simulator.finalize()
+    _install_capsule_contact(rod_block, config, broad_phase=broad_phase, device=device)
+    return simulator, rod_block
+
+
+def run_rollout_mpi(
+    *,
+    comm: Any,
+    n_rods_total: int,
+    steps: int,
+    warmup_runs: int,
+    backend: str = "cpu",
+    vertical: bool = False,
+    n_elements: int = N_ELEMENTS,
+    steps_between_detection: int = STEPS_BETWEEN_DETECTION,
+    broad_phase: str = "spatial_hash",
+) -> tuple[float, list[float] | None]:
+    """Time one MPI contact rollout and gather per-rank walltimes.
+
+    Returns
+    -------
+    tuple[float, list[float] | None]
+        Max instantiation time across ranks and gathered per-rank rollout
+        times on rank 0. Non-root ranks receive ``None`` for gathered times.
+    """
+    from mpi4py import MPI
+
+    assert steps > 0, "steps must be positive."
+    assert warmup_runs >= 0, "warmup_runs must be nonnegative."
+    assert n_rods_total > 0, "n_rods_total must be positive."
+
+    config = ContactScalingConfig(
+        n_rods=n_rods_total,
+        n_elements=n_elements,
+        steps_between_detection=steps_between_detection,
+    )
+    device = resolve_mpi_block_device(backend=backend, comm=comm)
+    instantiate_start = time.perf_counter()
+    with jax.default_device(device):
+        simulator, rod_block = build_simulation_mpi(
+            config,
+            comm=comm,
+            backend=backend,
+            vertical=vertical,
+            broad_phase=broad_phase,
+        )
+        _block_until_ready(rod_block)
+        instantiate_seconds = time.perf_counter() - instantiate_start
+        rollout_seconds = integrate_jax_block_rollout(
+            simulator,
+            rod_block,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            time_step=config.time_step,
+        )
+    rollout_seconds_all_ranks = comm.gather(rollout_seconds, root=0)
+    instantiate_seconds = comm.allreduce(instantiate_seconds, op=MPI.MAX)
+    return instantiate_seconds, rollout_seconds_all_ranks
