@@ -19,7 +19,7 @@ type SweepPoint = tuple[int, int, float, float]
 
 @dataclass(frozen=True)
 class ScalingCase:
-    """One backend/layout series for CSV export and plotting."""
+    """One backend/layout/device-count series for CSV export and plotting."""
 
     backend: str
     vertical: bool
@@ -63,7 +63,24 @@ def sweep_backend(
     n_devices: int = 1,
     verbose: bool,
 ) -> list[SweepPoint]:
-    """Time rollouts for ``n_rods = 2**exp`` via the throughput worker."""
+    """Time rollouts for ``n_rods = 2**exp`` via the throughput worker.
+
+    Parameters
+    ----------
+    backend :
+        Throughput backend (``"pyelastica"``, ``"cpu"``, or ``"cuda"``).
+    min_exp, max_exp :
+        Inclusive rod-count exponents.
+    steps, warmup_runs, n_elements, steps_between_detection, broad_phase :
+        Forwarded into ``ThroughputConfig``.
+    vertical :
+        Use the stacked vertical memory block when True.
+    n_devices :
+        Device count for vertical multi-device sharding (must be 1 unless
+        ``vertical``).
+    verbose :
+        Enable the per-exponent progress bar when True.
+    """
     assert min_exp >= 0, "min exponent must be nonnegative."
     assert max_exp >= min_exp, "max exponent must be >= min exponent."
     assert n_devices >= 1, "n_devices must be positive."
@@ -191,7 +208,15 @@ def run_scaling_benchmark(
     output_csv: Path | None,
     verbose: bool,
 ) -> None:
-    """Run one backend/layout sweep and export CSV + plot."""
+    """Run one backend/layout/device-count sweep and export CSV + plot.
+
+    Parameters
+    ----------
+    n_devices :
+        Device count for vertical multi-device sharding (default 1).
+    output_plot, output_csv :
+        Plot path and optional CSV path (defaults to plot with ``.csv``).
+    """
     points = sweep_backend(
         backend,
         min_exp,
