@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, ClassVar, TypeAlias
+from typing import ClassVar
 
 import numpy as np
 
-JAXTime: TypeAlias = np.float64
-JAXBlockState: TypeAlias = dict[str, Any]
+from elastica_jax.memory_block.protocol import JAXBlockState, RodView
+
+type JAXTime = np.float64
 
 
 class CommunicationScope(Enum):
@@ -24,23 +25,20 @@ class NoBlockOpJax:
     `NoBlockOpJax` supports two authoring styles.
 
     1. Block-wide methods
-       Operate directly on the full packed JAX block state. Use this when the
-       operation is naturally expressed on the entire block, for example a
-       uniform block-wide damping pass or a custom transform that does not need
-       rod-local slicing semantics.
+       Operate directly on the full authoritative Block state (packed or
+       stacked). Use this when the operation is naturally expressed on the
+       entire Block, for example contact across rods or transforms that index
+       packed ghosts.
 
     2. Per-rod methods
-       Operate on one rod-shaped view at a time, but are automatically batched
-       across every rod in the block during `finalize()`. Use this when the
-       logic is conceptually "same operator for every rod" and you want to keep
-       rod-local syntax while still avoiding Python-side iteration during the
-       JAX rollout.
+       Operate on one Rod-local view at a time. During `finalize()`, the Block
+       batches them with ``map_rods``. Use this when the logic is conceptually
+       "same operator for every rod".
 
     The simulator-side lowering logic decides how to execute the operator:
 
-    - `jax_block_operate_*` methods are registered as block-native transforms.
-    - `jax_per_rod_operate_*` methods are gathered, `vmap`'d across rods, and
-      scattered back to the block state once per stage.
+    - `jax_block_operate_*` methods receive Block state as-is (no projection).
+    - `jax_per_rod_operate_*` methods are applied through ``Block.map_rods``.
 
     Notes
     -----
@@ -85,24 +83,24 @@ class NoBlockOpJax:
 
     def jax_per_rod_operate_constrain_values(
         self,
-        rod_view: Any,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> Any:
-        """Apply a per-rod value constraint stage that will be batched with `vmap`."""
+    ) -> RodView:
+        """Apply a per-rod value constraint; Block.map_rods batches across rods."""
         return rod_view
 
     def jax_per_rod_operate_synchronize(
         self,
-        rod_view: Any,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> Any:
-        """Apply a per-rod synchronize stage that will be batched with `vmap`."""
+    ) -> RodView:
+        """Apply a per-rod synchronize stage; Block.map_rods batches across rods."""
         return rod_view
 
     def jax_per_rod_operate_constrain_rates(
         self,
-        rod_view: Any,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> Any:
-        """Apply a per-rod rate constraint stage that will be batched with `vmap`."""
+    ) -> RodView:
+        """Apply a per-rod rate constraint; Block.map_rods batches across rods."""
         return rod_view

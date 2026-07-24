@@ -63,3 +63,4 @@
         def __init__(self, *, _system: eaj.RodSystemLike) -> None:
             self.fixed_position = _system.position_collection[..., 0].copy()
     ```
+- Operator constructor can include either `_system` if initialization require intiial system/rod state, or `**kwargs` to bypass and absorb.

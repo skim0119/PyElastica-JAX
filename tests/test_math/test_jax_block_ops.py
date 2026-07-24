@@ -140,22 +140,27 @@ def test_block_snake_ops_match_single_rod_sequence() -> None:
         .commit()
     )
 
-    block_state = SnakeMuscleTorquesBlockJax(
-        b_coeff=b_coeff,
-        period=2.0,
-        base_length=0.35,
-        _system=block,
-    ).jax_block_operate_synchronize(base_state, time)
-    block_state = GravityPlaneContactBlockJax(
-        plane_origin=np.array([0.0, -0.35 * 0.011, 0.0], dtype=np.float64),
-        plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
-        slip_velocity_tol=1.0e-8,
-        k=1.0,
-        nu=1.0e-6,
-        kinetic_mu_array=kinetic_mu,
-        static_mu_array=static_mu,
-        _system=block,
-    ).jax_block_operate_synchronize(block_state, time)
+    block_state = block.map_rods(
+        base_state,
+        SnakeMuscleTorquesBlockJax(
+            rest_lengths=rod.rest_lengths,
+            b_coeff=b_coeff,
+            period=2.0,
+        ).jax_per_rod_operate_synchronize,
+        time,
+    )
+    block_state = block.map_rods(
+        block_state,
+        GravityPlaneContactBlockJax(
+            plane_origin=np.array([0.0, -0.35 * 0.011, 0.0], dtype=np.float64),
+            plane_normal=np.array([0.0, 1.0, 0.0], dtype=np.float64),
+            slip_velocity_tol=1.0e-8,
+            k=1.0,
+            nu=1.0e-6,
+            kinetic_mu_array=kinetic_mu,
+        ).jax_per_rod_operate_synchronize,
+        time,
+    )
     block_state = (
         eaj.AnalyticalLinearDamperJax(
             time_step=np.float64(1.0e-4),
