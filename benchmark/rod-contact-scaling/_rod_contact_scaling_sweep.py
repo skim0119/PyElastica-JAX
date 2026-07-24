@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import csv
 import inspect
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeAlias
+from typing import Callable
 
 import click
 import matplotlib.pyplot as plt
@@ -14,8 +15,30 @@ from tqdm import tqdm
 
 from _rod_contact_common import N_ELEMENTS, run_rollout
 
-SweepPoint: TypeAlias = tuple[int, int, float, float]
-RunRolloutFn: TypeAlias = Callable[..., tuple[float, float]]
+type SweepPoint = tuple[int, int, float, float]
+type RunRolloutFn = Callable[..., tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class ScalingCase:
+    """One backend/layout series for CSV export and plotting."""
+
+    backend: str
+    vertical: bool
+    points: list[SweepPoint]
+
+    @property
+    def label(self) -> str:
+        return series_label(self.backend, vertical=self.vertical)
+
+
+def series_label(backend: str, *, vertical: bool) -> str:
+    """Return the plot/CSV series label for a backend and layout."""
+    if backend == "pyelastica":
+        assert not vertical, "PyElastica has no vertical stacked layout."
+        return "pyelastica"
+    layout = "vertical" if vertical else "horizontal"
+    return f"jax-{backend}-{layout}"
 
 
 def sweep_backend(
@@ -28,6 +51,7 @@ def sweep_backend(
     n_elements: int,
     steps_between_detection: int,
     broad_phase: str = "spatial_hash",
+    vertical: bool = False,
     verbose: bool,
     run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> list[SweepPoint]:
@@ -36,13 +60,14 @@ def sweep_backend(
     assert max_exp >= min_exp, "max exponent must be >= min exponent."
 
     results: list[SweepPoint] = []
+    label = series_label(backend, vertical=vertical)
     for exponent in tqdm(
         range(min_exp, max_exp + 1),
-        desc=f"{backend} rod-rod contact",
+        desc=f"{label} rod-rod contact",
         disable=not verbose,
     ):
         n_rods = 2**exponent
-        run_kwargs = {
+        run_kwargs: dict[str, object] = {
             "n_rods": n_rods,
             "steps": steps,
             "warmup_runs": warmup_runs,
@@ -55,9 +80,11 @@ def sweep_backend(
             run_kwargs["steps_between_detection"] = steps_between_detection
         if "broad_phase" in rollout_params:
             run_kwargs["broad_phase"] = broad_phase
+        if "vertical" in rollout_params:
+            run_kwargs["vertical"] = vertical
         instantiate_seconds, rollout_seconds = run_rollout_fn(**run_kwargs)
         print(
-            f"{backend} n_rods={n_rods} (2^{exponent}): "
+            f"{label} n_rods={n_rods} (2^{exponent}): "
             f"instantiate={instantiate_seconds:.3f}s "
             f"rollout={rollout_seconds:.6f}s"
         )
@@ -66,7 +93,7 @@ def sweep_backend(
 
 
 def export_scaling_plot(
-    series: dict[str, list[SweepPoint]],
+    cases: list[ScalingCase],
     *,
     steps: int,
     n_elements: int,
@@ -75,10 +102,12 @@ def export_scaling_plot(
     """Write a log-log plot of rollout wall time versus rod count."""
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
 
-    for label, points in series.items():
-        n_rods = np.asarray([point[1] for point in points], dtype=np.float64)
-        rollout_seconds = np.asarray([point[3] for point in points], dtype=np.float64)
-        ax.loglog(n_rods, rollout_seconds, marker="o", label=label)
+    for case in cases:
+        n_rods = np.asarray([point[1] for point in case.points], dtype=np.float64)
+        rollout_seconds = np.asarray(
+            [point[3] for point in case.points], dtype=np.float64
+        )
+        ax.loglog(n_rods, rollout_seconds, marker="o", label=case.label)
 
     ax.set_xlabel("number of rods")
     ax.set_ylabel("rollout wall time (s)")
@@ -93,20 +122,22 @@ def export_scaling_plot(
 
 
 def export_scaling_csv(
-    series: dict[str, list[SweepPoint]],
+    cases: list[ScalingCase],
     *,
     steps: int,
     n_elements: int,
     steps_between_detection: int,
+    broad_phase: str,
     output: Path,
 ) -> None:
-    """Write sweep results as long-form CSV."""
+    """Write sweep results as long-form CSV for later combined plotting."""
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
             (
                 "backend",
+                "vertical",
                 "exponent",
                 "n_rods",
                 "instantiate_s",
@@ -114,13 +145,15 @@ def export_scaling_csv(
                 "steps",
                 "n_elements",
                 "steps_between_detection",
+                "broad_phase",
             )
         )
-        for backend, points in series.items():
-            for exponent, n_rods, instantiate_s, rollout_s in points:
+        for case in cases:
+            for exponent, n_rods, instantiate_s, rollout_s in case.points:
                 writer.writerow(
                     (
-                        backend,
+                        case.backend,
+                        int(case.vertical),
                         exponent,
                         n_rods,
                         instantiate_s,
@@ -128,6 +161,7 @@ def export_scaling_csv(
                         steps,
                         n_elements,
                         steps_between_detection,
+                        broad_phase,
                     )
                 )
     print(f"wrote csv: {output}")
@@ -136,7 +170,6 @@ def export_scaling_csv(
 def run_scaling_benchmark(
     *,
     backend: str,
-    label: str,
     min_exp: int,
     max_exp: int,
     steps: int,
@@ -144,12 +177,13 @@ def run_scaling_benchmark(
     n_elements: int,
     steps_between_detection: int,
     broad_phase: str = "spatial_hash",
+    vertical: bool = False,
     output_plot: Path,
     output_csv: Path | None,
     verbose: bool,
     run_rollout_fn: RunRolloutFn = run_rollout,
 ) -> None:
-    """Run one backend sweep and export CSV + plot."""
+    """Run one backend/layout sweep and export CSV + plot."""
     points = sweep_backend(
         backend,
         min_exp,
@@ -159,20 +193,22 @@ def run_scaling_benchmark(
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
         broad_phase=broad_phase,
+        vertical=vertical,
         verbose=verbose,
         run_rollout_fn=run_rollout_fn,
     )
-    series = {label: points}
+    cases = [ScalingCase(backend=backend, vertical=vertical, points=points)]
     csv_path = output_csv if output_csv is not None else output_plot.with_suffix(".csv")
     export_scaling_csv(
-        series,
+        cases,
         steps=steps,
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
+        broad_phase=broad_phase,
         output=csv_path,
     )
     export_scaling_plot(
-        series,
+        cases,
         steps=steps,
         n_elements=n_elements,
         output=output_plot,
@@ -181,10 +217,10 @@ def run_scaling_benchmark(
 
 def scaling_cli(
     backend: str,
-    label: str,
     default_plot: str,
     *,
     run_rollout_fn: RunRolloutFn = run_rollout,
+    allow_vertical: bool = True,
 ) -> click.Command:
     """Return a click command configured for one backend."""
 
@@ -209,6 +245,11 @@ def scaling_cli(
         help="JAX contact broad-phase strategy.",
     )
     @click.option(
+        "--vertical",
+        is_flag=True,
+        help="Use stacked vertical rod memory block (JAX only).",
+    )
+    @click.option(
         "--output",
         type=click.Path(path_type=Path),
         default=Path(default_plot),
@@ -230,14 +271,16 @@ def scaling_cli(
         n_elements: int,
         steps_between_detection: int,
         broad_phase: str,
+        vertical: bool,
         output: Path,
         csv_output: Path | None,
         quiet: bool,
     ) -> None:
         """Sweep rod count and plot rollout wall time for rod-rod contact."""
+        if vertical:
+            assert allow_vertical, f"Backend {backend!r} does not support --vertical."
         run_scaling_benchmark(
             backend=backend,
-            label=label,
             min_exp=min_exp,
             max_exp=max_exp,
             steps=steps,
@@ -245,6 +288,7 @@ def scaling_cli(
             n_elements=n_elements,
             steps_between_detection=steps_between_detection,
             broad_phase=broad_phase,
+            vertical=vertical,
             output_plot=output,
             output_csv=csv_output,
             verbose=not quiet,
