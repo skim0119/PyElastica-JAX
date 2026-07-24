@@ -42,10 +42,10 @@ from elastica_jax._linalg import (
     _jax_batch_transpose_matvec,
 )
 from elastica_jax._rotations import _jax_get_rotation_matrix, _jax_inv_rotate
-from elastica_jax.memory_block.memory_block_rod_jax import (
-    RodSyncTarget,
-    _SYNCABLE_ATTRS,
-)
+from elastica_jax.memory_block.memory_block_rod_jax import RodSyncTarget
+from elastica_jax.memory_block.protocol import JAXBlockState, RodLocalOp
+from elastica_jax.memory_block.rod_local_map import map_rods_stacked
+from elastica_jax.memory_block.syncable_attrs import _SYNCABLE_ATTRS
 
 import jax
 import jax.numpy as jnp
@@ -658,6 +658,30 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def jax_get_state(self) -> dict[str, jax.Array]:
         return dict(self._device_state)
 
+    def map_rods(
+        self,
+        state: JAXBlockState,
+        op: RodLocalOp | Sequence[RodLocalOp],
+        time: np.float64 | float,
+    ) -> JAXBlockState:
+        """Apply ``op`` on stacked Rod-local state and write back.
+
+        Parameters
+        ----------
+        state :
+            Authoritative stacked Block state.
+        op :
+            One shared Rod-local operator, or one operator per rod.
+        time :
+            Simulation time passed through to ``op``.
+
+        Returns
+        -------
+        JAXBlockState
+            Stacked Block state after rod-local updates.
+        """
+        return map_rods_stacked(state, op, time)
+
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)
         self._device_dirty = True
@@ -692,6 +716,19 @@ class _CosseratRodVerticalMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         state = self._device_state
         for rod_idx in range(self.n_rods):
             yield JAXRodStackedView(state, rod_idx)
+
+    def rods(self) -> Sequence[RodType]:
+        """Return host rods packed into this Block, in block order.
+
+        Returns
+        -------
+        Sequence[RodType]
+            Packed host rods in block order.
+        """
+        assert hasattr(self, "_systems"), (
+            "Block must be built before accessing packed rods."
+        )
+        return self._systems
 
     def tree_flatten(
         self,

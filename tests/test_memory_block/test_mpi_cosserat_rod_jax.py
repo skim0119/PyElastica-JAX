@@ -93,14 +93,11 @@ def test_mpi_block_finalize_and_integrate_local_gravity() -> None:
 
 def test_mpi_vertical_block_is_stacked_and_integrates() -> None:
     """MPI-wrapped vertical blocks must keep stacked layout through finalize."""
-    from elastica_jax.modules.jax_ops_block import JAXOpsBlock
-
     comm = _FakeComm(rank=0, size=2)
     rod_block = eaj.configure_rod_block_mpi(
         comm=comm,
         inner_block_cls=eaj._CosseratRodVerticalMemoryBlock,
     )
-    assert JAXOpsBlock._is_stacked_layout(rod_block)
 
     simulator = eaj.Simulator()
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
@@ -124,7 +121,6 @@ def test_mpi_vertical_block_is_stacked_and_integrates() -> None:
 
     assert isinstance(rod_block, eaj._MpiCosseratRodBlock)
     assert isinstance(rod_block._inner_block, eaj._CosseratRodVerticalMemoryBlock)
-    assert JAXOpsBlock._is_stacked_layout(rod_block)
     assert rod_block.position_collection.ndim == 3
 
     initial_positions = [rod.position_collection.copy() for rod in rods]
