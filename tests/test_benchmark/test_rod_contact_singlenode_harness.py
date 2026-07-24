@@ -120,3 +120,17 @@ def test_throughput_worker_rejects_vertical_pyelastica() -> None:
                 vertical=True,
             ),
         )
+
+
+def test_throughput_worker_rejects_multidevice_without_vertical() -> None:
+    with pytest.raises(AssertionError, match="vertical"):
+        run_throughput(
+            backend="cpu",
+            config=ThroughputConfig(
+                n_rods_exp=1,
+                steps=1,
+                warmup_runs=0,
+                vertical=False,
+                n_devices=2,
+            ),
+        )
