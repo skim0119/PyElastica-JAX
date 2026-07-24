@@ -44,7 +44,6 @@ def series_label(backend: str, *, vertical: bool, n_devices: int = 1) -> str:
     layout = "vertical" if vertical else "horizontal"
     label = f"jax-{backend}-{layout}"
     if n_devices > 1:
-        assert vertical, "n_devices > 1 requires vertical layout."
         return f"{label}-{n_devices}x"
     return label
 
