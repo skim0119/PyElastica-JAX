@@ -24,20 +24,29 @@ class ScalingCase:
     backend: str
     vertical: bool
     points: list[SweepPoint]
+    n_devices: int = 1
 
     @property
     def label(self) -> str:
         """Return the plot legend label for this backend and layout."""
-        return series_label(self.backend, vertical=self.vertical)
+        return series_label(
+            self.backend, vertical=self.vertical, n_devices=self.n_devices
+        )
 
 
-def series_label(backend: str, *, vertical: bool) -> str:
-    """Return the plot/CSV series label for a backend and layout."""
+def series_label(backend: str, *, vertical: bool, n_devices: int = 1) -> str:
+    """Return the plot/CSV series label for a backend, layout, and device count."""
+    assert n_devices >= 1, "n_devices must be positive."
     if backend == "pyelastica":
         assert not vertical, "PyElastica has no vertical stacked layout."
+        assert n_devices == 1, "PyElastica does not support n_devices > 1."
         return "pyelastica"
     layout = "vertical" if vertical else "horizontal"
-    return f"jax-{backend}-{layout}"
+    label = f"jax-{backend}-{layout}"
+    if n_devices > 1:
+        assert vertical, "n_devices > 1 requires vertical layout."
+        return f"{label}-{n_devices}x"
+    return label
 
 
 def sweep_backend(
@@ -51,14 +60,16 @@ def sweep_backend(
     steps_between_detection: int,
     broad_phase: str = "spatial_hash",
     vertical: bool = False,
+    n_devices: int = 1,
     verbose: bool,
 ) -> list[SweepPoint]:
     """Time rollouts for ``n_rods = 2**exp`` via the throughput worker."""
     assert min_exp >= 0, "min exponent must be nonnegative."
     assert max_exp >= min_exp, "max exponent must be >= min exponent."
+    assert n_devices >= 1, "n_devices must be positive."
 
     results: list[SweepPoint] = []
-    label = series_label(backend, vertical=vertical)
+    label = series_label(backend, vertical=vertical, n_devices=n_devices)
     for exponent in tqdm(
         range(min_exp, max_exp + 1),
         desc=f"{label} rod-rod contact",
@@ -72,6 +83,7 @@ def sweep_backend(
             steps_between_detection=steps_between_detection,
             broad_phase=broad_phase,
             vertical=vertical,
+            n_devices=n_devices,
         )
         instantiate_seconds, rollout_seconds = run_throughput(
             backend=backend,
@@ -132,6 +144,7 @@ def export_scaling_csv(
             (
                 "backend",
                 "vertical",
+                "n_devices",
                 "exponent",
                 "n_rods",
                 "instantiate_s",
@@ -148,6 +161,7 @@ def export_scaling_csv(
                     (
                         case.backend,
                         int(case.vertical),
+                        case.n_devices,
                         exponent,
                         n_rods,
                         instantiate_s,
@@ -172,6 +186,7 @@ def run_scaling_benchmark(
     steps_between_detection: int,
     broad_phase: str = "spatial_hash",
     vertical: bool = False,
+    n_devices: int = 1,
     output_plot: Path,
     output_csv: Path | None,
     verbose: bool,
@@ -187,9 +202,17 @@ def run_scaling_benchmark(
         steps_between_detection=steps_between_detection,
         broad_phase=broad_phase,
         vertical=vertical,
+        n_devices=n_devices,
         verbose=verbose,
     )
-    cases = [ScalingCase(backend=backend, vertical=vertical, points=points)]
+    cases = [
+        ScalingCase(
+            backend=backend,
+            vertical=vertical,
+            n_devices=n_devices,
+            points=points,
+        )
+    ]
     csv_path = output_csv if output_csv is not None else output_plot.with_suffix(".csv")
     export_scaling_csv(
         cases,
