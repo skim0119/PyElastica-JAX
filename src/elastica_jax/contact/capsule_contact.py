@@ -21,10 +21,15 @@ from elastica_jax.contact.capsule_metadata import (
     capsule_kinematics_from_block_state,
 )
 from elastica_jax.contact.kernels import apply_capsule_pair_forces, apply_wall_contacts
+from elastica_jax.contact.mpi_halo import (
+    assemble_mpi_halo_kinematics,
+    inflate_capsule_metadata_for_mpi,
+)
 from elastica_jax.contact.spatial_hash_jax import (
     rebuild_all_pairs_jax,
     rebuild_spatial_hash_pairs_jax,
 )
+from elastica_jax.memory_block.mpi_cosserat_rod_jax import _MpiCosseratRodBlock
 
 
 def _rebuild_broad_phase_pairs(
@@ -66,6 +71,30 @@ def _apply_capsule_contact_unified(
     time: BlockJAXTime,
 ) -> dict[str, Any]:
     kinematics = capsule_kinematics_from_block_state(state, op.metadata)
+    owned_mask: jax.Array | None = None
+    scatter_directors = kinematics["directors"]
+    scatter_elem = kinematics["block_element_indices"]
+    scatter_rod_ids = kinematics["rod_ids"]
+    broad_rod_ids = op._rod_ids
+    if op._mpi_comm is not None:
+        assert op._global_rod_indices is not None, (
+            "MPI CapsuleContactOp requires global_rod_indices."
+        )
+        (
+            kinematics,
+            owned_mask,
+            scatter_rod_ids,
+            scatter_elem,
+            scatter_directors,
+        ) = assemble_mpi_halo_kinematics(
+            kinematics=kinematics,
+            global_rod_indices=op._global_rod_indices,
+            comm=op._mpi_comm,
+            rank=op._mpi_rank,
+            world_size=op._mpi_size,
+        )
+        broad_rod_ids = kinematics["rod_ids"]
+
     detection_interval = op.steps_between_detection * op.time_step
     detection_due = (detection_interval == 0.0) | (
         time - state[CONTACT_STATE_LAST_DETECTION_TIME] >= detection_interval
@@ -81,7 +110,7 @@ def _apply_capsule_contact_unified(
         return _rebuild_broad_phase_pairs(
             broad_phase=op.metadata.broad_phase,
             centers=kinematics["centers"],
-            rod_ids=op._rod_ids,
+            rod_ids=broad_rod_ids,
             axes=kinematics["axes"],
             lengths=kinematics["lengths"],
             radii=kinematics["radii"],
@@ -137,8 +166,8 @@ def _apply_capsule_contact_unified(
         lengths=kinematics["lengths"],
         radii=kinematics["radii"],
         omega=kinematics["omega"],
-        directors=kinematics["directors"],
-        block_element_indices=kinematics["block_element_indices"],
+        directors=scatter_directors,
+        block_element_indices=scatter_elem,
         external_forces=external_forces,
         external_torques=external_torques,
         contact_stiffness=contact_stiffness,
@@ -152,6 +181,8 @@ def _apply_capsule_contact_unified(
         friction_coefficient=op.friction_coefficient,
         static_velocity_threshold=op.static_velocity_threshold,
         friction_gate=friction_gate,
+        rod_ids=scatter_rod_ids,
+        owned_mask=owned_mask,
     )
     updated = dict(state)
     updated["external_forces"] = external_forces
@@ -165,13 +196,20 @@ def _apply_capsule_contact_unified(
 
 
 class CapsuleContactOp(NoBlockOpJax):
-    """Capsule-capsule contact for packed Cosserat rod blocks.
+    """Capsule-capsule contact for packed or stacked Cosserat rod blocks.
 
     Broad-phase candidates are collected by either a spatial hash
     (``broad_phase="spatial_hash"``, default) or by all-pairs AABB testing
     (``broad_phase="all_pairs"``), which mirrors PyElastica's non-hashed
     rod-rod contact registration style. Both paths run as pure JAX on the
     block device.
+
+    On a multi-device vertical block, kinematics are gathered across the rod
+    mesh so contact pairs that span device shards remain physically coupled.
+
+    On an MPI rod block, capsule kinematics are allgathered (``HALO_READ``)
+    before broad/fine phase so cross-rank pairs stay coupled; contact loads are
+    scattered only onto capsules owned by the local rank.
 
     By default the contact is the linear normal-spring/damper law. Optional
     arguments enable a Hertzian ``gamma^1.5`` normal law (``hertzian=True``), a
@@ -183,6 +221,16 @@ class CapsuleContactOp(NoBlockOpJax):
     """
 
     communication_scope = CommunicationScope.HALO_READ
+    halo_fields = (
+        "position_collection",
+        "velocity_collection",
+        "mass",
+        "tangents",
+        "lengths",
+        "radius",
+        "director_collection",
+        "omega_collection",
+    )
 
     def __init__(
         self,
@@ -227,6 +275,20 @@ class CapsuleContactOp(NoBlockOpJax):
                 f"broad_phase={broad_phase!r}."
             )
         self._block = _system
+        self._mpi_comm: Any | None = None
+        self._mpi_rank = 0
+        self._mpi_size = 1
+        self._global_rod_indices: jax.Array | None = None
+        if isinstance(_system, _MpiCosseratRodBlock):
+            self._mpi_comm = _system.comm
+            self._mpi_rank = int(_system.comm_rank)
+            self._mpi_size = int(_system.comm_size)
+            self._global_rod_indices = jnp.asarray(
+                _system.global_rod_indices, dtype=jnp.int32
+            )
+            metadata = inflate_capsule_metadata_for_mpi(
+                metadata, world_size=self._mpi_size
+            )
         self.metadata = metadata
         self.contact_stiffness = contact_stiffness
         self.contact_damping = contact_damping
@@ -271,6 +333,7 @@ def _apply_wall_contact_unified(
         external_torques=state["external_torques"],
         contact_stiffness=op.contact_stiffness,
         contact_damping=op.contact_damping,
+        rod_ids=kinematics["rod_ids"],
     )
     updated = dict(state)
     updated["external_forces"] = external_forces
@@ -279,7 +342,7 @@ def _apply_wall_contact_unified(
 
 
 class WallContactOp(NoBlockOpJax):
-    """Half-space wall contact for packed capsule elements."""
+    """Half-space wall contact for packed or stacked capsule elements."""
 
     communication_scope = CommunicationScope.LOCAL
 
