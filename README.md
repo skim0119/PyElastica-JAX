@@ -218,16 +218,18 @@ simulator.finalize()
 
 `PyElastica-JAX` supports block-wise operation. This is partially tested on `PyElastica` and have shown great performance boost, but not fully included due to difficulties in customizing every operation to be block-wise and JIT compatible. This enables faster implementation-execution of large-scale (many rods) simulations, especially when operation needs to be applied to all rods at each step.
 
-This operation module provides two style of operation: __block__ and __per-rod__.
-The default memory block packs rods **horizontally** into contiguous arrays with
-ghost padding so spanwise kernels stay isolated per rod.
-__Block__ operation (`jax_block_operate_*`) is authored against one rod-shaped
-state and is batched across rods by the backend with ``vmap``.
-__Per-rod__ operation (`jax_per_rod_operate_*`) uses an explicit rod view; under
-the hood it is also batched across rods.
+This operation module provides two styles of operation: __block__ and __per-rod__. The default memory block packs rods **horizontally** into contiguous arrays with ghost padding so spanwise kernels stay isolated per rod.
 
-> When using block operation with spanwise equation, carefully treat the ghost ghost elements and their behavior. Ghost padding is only to separate the numerics to be isolated within the rod, but does not have any safety to keep those values zeros. <TODO: add more details in documentation>
-> __block__ operation will be deprecated.
+- __Block__ operation (`jax_block_operate_*`) receives the full authoritative
+  Block state (packed or stacked) as-is. Use this for Block-native logic such
+  as contact across rods or transforms that index packed ghosts.
+- __Per-rod__ operation (`jax_per_rod_operate_*`) receives one Rod-local view.
+  The Block batches across rods with ``map_rods`` (gather/scatter when packed;
+  leading-rod axis when stacked). Shared identical callables use ``jax.vmap``.
+
+> When using block-native spanwise equations, carefully treat ghost elements.
+> Ghost padding isolates numerics within each rod, but does not keep those
+> values zero. <TODO: add more details in documentation>
 
 Register block operations with `operate_block` on `eaj.Simulator`:
 
@@ -247,7 +249,7 @@ simulator.operate_block(rod_block).using(
 simulator.finalize()
 ```
 
-To define the operator, derive from `eaj.NoBlockOpJax` and override block-stage hooks. Similar to regular oepration, following functions could be overridden:
+To define the operator, derive from `eaj.NoBlockOpJax` and override block-stage hooks. Similar to regular operation, following functions could be overridden:
 
 - `jax_block_operate_synchronize` — Executed before the dynamic step.
 - `jax_block_operate_constrain_values` — Executed after the kinematic step.
@@ -256,17 +258,15 @@ To define the operator, derive from `eaj.NoBlockOpJax` and override block-stage 
 - `jax_per_rod_operate_constrain_values` — Executed after the kinematic step.
 - `jax_per_rod_operate_constrain_rates` — Executed after the dynamic step.
 
-`jax_block_operate_*` functions are authored against **one rod-shaped block
-state** (for example vector fields with shape ``(3, N)``). The simulator backend
-batches that operator across every rod in the block:
-
-- horizontally packed blocks: gather each rod, ``vmap`` the operator, scatter
-- vertically stacked blocks: ``vmap`` directly over the leading rod axis
+`jax_block_operate_*` functions take the full Block state dictionary and return
+an updated dictionary. There is no Rod-local projection.
 
 `jax_per_rod_operate_*` functions receive a single rod view and return the
-updated view; they are batched the same way.
+updated view (or committed state). Prefer this style for rod-shaped logic that
+should run once per rod; do not register that logic as `jax_block_operate_*`
+expecting a secret gather/`vmap`.
 
-> **Reusing single-rod operators on blocks:** Classes derived from ``eaj.NoOpsJax`` (the same ``jax_operate_*`` API used with ``operate(rod)``) can also be registered with ``operate_block(rod_block).using(...)``. This is intentional: one operator instance is created per rod in the block (so ``__init__`` can read that rod's ``_system``), and the existing rod-local kernels are batched through the same per-rod gather/scatter path as ``jax_per_rod_operate_*``. For example, ``eaj.OneEndFixedJax`` works with both ``operate(rod)`` and ``operate_block(rod_block)`` without duplicating the implementation under ``jax_per_rod_operate_*``.
+> **Reusing single-rod operators on blocks:** Classes derived from ``eaj.NoOpsJax`` (the same ``jax_operate_*`` API used with ``operate(rod)``) can also be registered with ``operate_block(rod_block).using(...)``. This is intentional: one operator instance is created per rod in the block (so ``__init__`` can read that rod's ``_system``), and the existing rod-local kernels are batched through ``Block.map_rods`` like ``jax_per_rod_operate_*``. For example, ``eaj.OneEndFixedJax`` works with both ``operate(rod)`` and ``operate_block(rod_block)`` without duplicating the implementation under ``jax_per_rod_operate_*``.
 
 Block-wide gravity on all rods and one-end-fixed on each rods:
 
@@ -377,8 +377,9 @@ stacking on a leading batch axis, sized ``(N_rods, 3, N_elements)``.
 | scalar | ``(n_rods, N)`` |
 
 where ``N`` is ``n_nodes``, ``n_elems``, or ``n_voronoi`` depending on the
-variable. Timestep kernels and `jax_block_operate_*` operators run under
-``jax.vmap`` over the rod axis. This gives greater parallelism in GPU or multi-device.
+variable. Timestep kernels run under ``jax.vmap`` over the rod axis.
+``jax_per_rod_operate_*`` operators are batched the same way.
+This gives greater parallelism in GPU or multi-device.
 
 ```py
 rod_block = eaj.configure_rod_block(
@@ -394,9 +395,9 @@ Constraints:
   raises an assertion)
 - ring rods are not supported
 
-Author `jax_block_operate_*` against one rod's arrays; do not special-case the
-stacked layout in user operators. The backend applies ``vmap`` for you.
-
+Author rod-shaped logic with `jax_per_rod_operate_*` (one rod view). Author
+Block-native logic with `jax_block_operate_*` on the full stacked state. Do not
+special-case the stacked layout in user operators.
 ### Multi-device Block Execution (User control)
 
 > Work-in-progress

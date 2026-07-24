@@ -35,50 +35,18 @@ from elastica.rod.data_structures import _RodSymplecticStepperMixin
 from elastica.rod.rod_base import RodBase
 from elastica.typing import RodType, SystemIdxType
 
-from .protocol import RodViewMetadata
+from .protocol import JAXBlockState, RodLocalOp, RodViewMetadata
+from .rod_local_map import map_rods_packed
+from .syncable_attrs import (
+    _ELEMENT_ATTRS,
+    _NODE_ATTRS,
+    _SYNCABLE_ATTRS,
+    _VORONOI_ATTRS,
+)
 
 import jax
 import jax.numpy as jnp
 
-
-_NODE_ATTRS: tuple[str, ...] = (
-    "mass",
-    "position_collection",
-    "internal_forces",
-    "external_forces",
-    "velocity_collection",
-    "acceleration_collection",
-)
-_ELEMENT_ATTRS: tuple[str, ...] = (
-    "radius",
-    "volume",
-    "density",
-    "lengths",
-    "rest_lengths",
-    "dilatation",
-    "dilatation_rate",
-    "tangents",
-    "sigma",
-    "rest_sigma",
-    "internal_torques",
-    "external_torques",
-    "internal_stress",
-    "director_collection",
-    "mass_second_moment_of_inertia",
-    "inv_mass_second_moment_of_inertia",
-    "shear_matrix",
-    "omega_collection",
-    "alpha_collection",
-)
-_VORONOI_ATTRS: tuple[str, ...] = (
-    "voronoi_dilatation",
-    "rest_voronoi_lengths",
-    "kappa",
-    "rest_kappa",
-    "internal_couple",
-    "bend_matrix",
-)
-_SYNCABLE_ATTRS: tuple[str, ...] = _NODE_ATTRS + _ELEMENT_ATTRS + _VORONOI_ATTRS
 
 RodSyncTarget: TypeAlias = RodType | Sequence[RodType] | Literal["all"]
 
@@ -1053,6 +1021,30 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
     def jax_get_state(self) -> dict[str, jax.Array]:
         return dict(self._device_state)
 
+    def map_rods(
+        self,
+        state: JAXBlockState,
+        op: RodLocalOp | Sequence[RodLocalOp],
+        time: np.float64 | float,
+    ) -> JAXBlockState:
+        """Project Block state to Rod-local, apply ``op``, write back.
+
+        Parameters
+        ----------
+        state :
+            Authoritative packed Block state.
+        op :
+            One shared Rod-local operator, or one operator per rod.
+        time :
+            Simulation time passed through to ``op``.
+
+        Returns
+        -------
+        JAXBlockState
+            Packed Block state after rod-local updates are scattered back.
+        """
+        return map_rods_packed(self, state, op, time)
+
     def _rod_view_metadata(self, rod_idx: int) -> JAXRodViewMetadata:
         """Return the node/element/voronoi slices for one rod in the block."""
         return JAXRodViewMetadata(
@@ -1094,6 +1086,19 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         state = self._device_state
         for rod_idx in range(self.n_rods):
             yield JAXRodView(state, self._rod_view_metadata(rod_idx))
+
+    def rods(self) -> Sequence[RodType]:
+        """Return host rods packed into this Block, in block order.
+
+        Returns
+        -------
+        Sequence[RodType]
+            Packed host rods in block order.
+        """
+        assert hasattr(self, "_systems"), (
+            "Block must be built before accessing packed rods."
+        )
+        return self._systems
 
     def jax_set_state(self, state: dict[str, jax.Array]) -> None:
         self._device_state = dict(state)
