@@ -210,9 +210,26 @@ def install_capsule_contact_state(
     device: jax.Device | None,
     dtype: np.dtype,
 ) -> None:
-    contact_state = initialize_capsule_contact_state(
-        metadata, device=device, dtype=dtype
-    )
+    """Install contact pair buffers onto ``block`` device memory.
+
+    When the block exposes ``device_put`` (including multi-device vertical
+    blocks), buffers are placed with the block's sharding so replicated
+    contact state stays compatible with rod-sharded kinematics.
+    """
+    put = getattr(block, "device_put", None)
+    if put is not None:
+        host_state = {
+            CONTACT_STATE_PAIR_FIRST: np.full(metadata.max_pairs, -1, dtype=np.int32),
+            CONTACT_STATE_PAIR_SECOND: np.full(metadata.max_pairs, -1, dtype=np.int32),
+            CONTACT_STATE_PAIR_COUNT: np.int32(0),
+            CONTACT_STATE_CANDIDATE_MASK: np.zeros(metadata.max_pairs, dtype=bool),
+            CONTACT_STATE_LAST_DETECTION_TIME: np.array(-np.inf, dtype=dtype),
+        }
+        contact_state = {key: put(value) for key, value in host_state.items()}
+    else:
+        contact_state = initialize_capsule_contact_state(
+            metadata, device=device, dtype=dtype
+        )
     state = block.jax_get_state()
     block.jax_set_state({**state, **contact_state})
 
