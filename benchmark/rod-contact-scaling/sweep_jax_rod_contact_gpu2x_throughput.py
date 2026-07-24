@@ -8,12 +8,7 @@ import click
 import jax
 
 from _rod_contact_common import N_ELEMENTS
-from _rod_contact_scaling_sweep import (
-    ScalingCase,
-    export_scaling_csv,
-    export_scaling_plot,
-    sweep_backend,
-)
+from _rod_contact_scaling_sweep import run_scaling_benchmark
 
 N_DEVICES = 2
 
@@ -85,12 +80,9 @@ def main(
     assert _backend_available(backend), (
         f"Backend {backend!r} needs at least {N_DEVICES} devices for gpu2x."
     )
-    assert min_exp >= 0, "min_exp must be nonnegative."
-    # Vertical multi-device requires n_rods divisible by n_devices; 2**exp works
-    # for exp >= 1. Allow exp=0 only when n_devices == 1 (not this entrypoint).
     assert min_exp >= 1, "gpu2x vertical sweeps require min_exp >= 1 (n_rods >= 2)."
 
-    points = sweep_backend(
+    run_scaling_benchmark(
         backend=backend,
         min_exp=min_exp,
         max_exp=max_exp,
@@ -101,30 +93,9 @@ def main(
         broad_phase=broad_phase,
         vertical=True,
         n_devices=N_DEVICES,
+        output_plot=output,
+        output_csv=csv_output,
         verbose=not quiet,
-    )
-    cases = [
-        ScalingCase(
-            backend=backend,
-            vertical=True,
-            n_devices=N_DEVICES,
-            points=points,
-        )
-    ]
-    csv_path = csv_output if csv_output is not None else output.with_suffix(".csv")
-    export_scaling_csv(
-        cases,
-        steps=steps,
-        n_elements=n_elements,
-        steps_between_detection=steps_between_detection,
-        broad_phase=broad_phase,
-        output=csv_path,
-    )
-    export_scaling_plot(
-        cases,
-        steps=steps,
-        n_elements=n_elements,
-        output=output,
     )
 
 

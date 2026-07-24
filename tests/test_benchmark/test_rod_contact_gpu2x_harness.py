@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmark" / "rod-contact-scaling"
 if str(BENCH_DIR) not in sys.path:
@@ -19,6 +20,7 @@ from _rod_contact_scaling_sweep import (  # noqa: E402
     sweep_backend,
 )
 from jax_rod_contact_throughput import ThroughputConfig  # noqa: E402
+from sweep_jax_rod_contact_gpu2x_throughput import main as gpu2x_main  # noqa: E402
 
 
 def test_series_label_encodes_multidevice_vertical() -> None:
@@ -83,3 +85,62 @@ def test_sweep_backend_forwards_n_devices(
     assert seen["vertical"] is True
     assert seen["n_devices"] == 2
     assert seen["n_rods"] == 2
+
+
+def test_gpu2x_cli_rejects_min_exp_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sweep_jax_rod_contact_gpu2x_throughput._backend_available",
+        lambda _name: True,
+    )
+    with pytest.raises(AssertionError, match="min_exp"):
+        CliRunner().invoke(
+            gpu2x_main,
+            ["--backend", "cpu", "--min-exp", "0", "--max-exp", "0", "--quiet"],
+            catch_exceptions=False,
+        )
+
+
+def test_gpu2x_cli_forwards_n_devices_to_scaling_benchmark(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_scaling_benchmark(**kwargs: object) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(
+        "sweep_jax_rod_contact_gpu2x_throughput._backend_available",
+        lambda _name: True,
+    )
+    monkeypatch.setattr(
+        "sweep_jax_rod_contact_gpu2x_throughput.run_scaling_benchmark",
+        _fake_run_scaling_benchmark,
+    )
+    plot = tmp_path / "gpu2x.png"
+    result = CliRunner().invoke(
+        gpu2x_main,
+        [
+            "--backend",
+            "cpu",
+            "--min-exp",
+            "1",
+            "--max-exp",
+            "1",
+            "--steps",
+            "5",
+            "--warmup-runs",
+            "0",
+            "--output",
+            str(plot),
+            "--quiet",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert seen["backend"] == "cpu"
+    assert seen["vertical"] is True
+    assert seen["n_devices"] == 2
+    assert seen["output_plot"] == plot
