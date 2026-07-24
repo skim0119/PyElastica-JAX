@@ -179,27 +179,30 @@ def build_block_capsule_metadata(
     )
 
 
+def _host_capsule_contact_state(
+    metadata: BlockCapsuleMetadata,
+    *,
+    dtype: np.dtype,
+) -> dict[str, np.ndarray]:
+    max_pairs = metadata.max_pairs
+    return {
+        CONTACT_STATE_PAIR_FIRST: np.full(max_pairs, -1, dtype=np.int32),
+        CONTACT_STATE_PAIR_SECOND: np.full(max_pairs, -1, dtype=np.int32),
+        CONTACT_STATE_PAIR_COUNT: np.asarray(0, dtype=np.int32),
+        CONTACT_STATE_CANDIDATE_MASK: np.zeros(max_pairs, dtype=bool),
+        CONTACT_STATE_LAST_DETECTION_TIME: np.array(-np.inf, dtype=dtype),
+    }
+
+
 def initialize_capsule_contact_state(
     metadata: BlockCapsuleMetadata,
     *,
     device: jax.Device | None,
     dtype: np.dtype,
 ) -> dict[str, jax.Array]:
-    max_pairs = metadata.max_pairs
+    host_state = _host_capsule_contact_state(metadata, dtype=dtype)
     return {
-        CONTACT_STATE_PAIR_FIRST: jax.device_put(
-            np.full(max_pairs, -1, dtype=np.int32), device=device
-        ),
-        CONTACT_STATE_PAIR_SECOND: jax.device_put(
-            np.full(max_pairs, -1, dtype=np.int32), device=device
-        ),
-        CONTACT_STATE_PAIR_COUNT: jax.device_put(np.int32(0), device=device),
-        CONTACT_STATE_CANDIDATE_MASK: jax.device_put(
-            np.zeros(max_pairs, dtype=bool), device=device
-        ),
-        CONTACT_STATE_LAST_DETECTION_TIME: jax.device_put(
-            np.array(-np.inf, dtype=dtype), device=device
-        ),
+        key: jax.device_put(value, device=device) for key, value in host_state.items()
     }
 
 
@@ -216,20 +219,15 @@ def install_capsule_contact_state(
     blocks), buffers are placed with the block's sharding so replicated
     contact state stays compatible with rod-sharded kinematics.
     """
+    host_state = _host_capsule_contact_state(metadata, dtype=dtype)
     put = getattr(block, "device_put", None)
     if put is not None:
-        host_state = {
-            CONTACT_STATE_PAIR_FIRST: np.full(metadata.max_pairs, -1, dtype=np.int32),
-            CONTACT_STATE_PAIR_SECOND: np.full(metadata.max_pairs, -1, dtype=np.int32),
-            CONTACT_STATE_PAIR_COUNT: np.int32(0),
-            CONTACT_STATE_CANDIDATE_MASK: np.zeros(metadata.max_pairs, dtype=bool),
-            CONTACT_STATE_LAST_DETECTION_TIME: np.array(-np.inf, dtype=dtype),
-        }
         contact_state = {key: put(value) for key, value in host_state.items()}
     else:
-        contact_state = initialize_capsule_contact_state(
-            metadata, device=device, dtype=dtype
-        )
+        contact_state = {
+            key: jax.device_put(value, device=device)
+            for key, value in host_state.items()
+        }
     state = block.jax_get_state()
     block.jax_set_state({**state, **contact_state})
 
