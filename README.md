@@ -93,6 +93,32 @@ rod_block.from_device()
 print(rods[0].position_collection[:, -1])  # Current tip position
 ```
 
+### Choose your customization level
+
+Start with `ea.CosseratRod` and the default `eaj.configure_rod_block()`.
+Set geometry and linear elastic material parameters on the rod, register loads,
+boundary conditions, and damping with `simulator.operate(rod).using(...)`, then
+finalize and integrate. Rods in the default horizontal Block may have different
+element counts. You do not need to handle packed indices for this workflow.
+
+The host Rod supplies initial arrays and constructor data. After `finalize()`,
+the Block owns the running state **and the runtime physics implementation**.
+Overriding `compute_internal_forces_and_torques` on a host Rod does not transfer
+that method to its JAX Block. A new constitutive law or rod model requires a
+matching JAX Block implementation; see [custom rod physics](#custom-rod-physics).
+
+| Your change | Extension point |
+| --- | --- |
+| Geometry, elastic moduli, or rest strains | Configure the host Rod before `finalize()` |
+| Boundary conditions, forcing, or damping | `operate(rod)` with a `NoOpsJax` subclass |
+| Rod-to-rod interactions | `pairwise_interaction(first, second)` |
+| Batch the same rod-local operation | `operate_block(block)` with equal discretization |
+| New constitutive law or rod state | A custom JAX Block with explicit packing and stepping behavior |
+
+The advanced sections explain Block layout, synchronization, and device
+placement. Keep the default setup until your model or measured performance
+requires those details.
+
 ### How to collect data?
 
 In `PyElastica`, data is collected by attaching `ea.Callback` to the system. In `PyElastica-JAX`, similar callback syntax is _not available_, as retrieving data from the block state is not supported.
@@ -231,6 +257,24 @@ simulator.finalize()
 
 ### Defining Block Operation
 
+Use `operate(rod)` by default. Block operations are an advanced optimization or
+an extension for physics that needs several rods' state together.
+
+For `jax_per_rod_operate_*`, or a `NoOpsJax` reused through `operate_block`, all
+rods in that Block must have equal element counts and the same open/ring
+topology. Unsupported combinations fail during `finalize()`. With unequal rods,
+register the same class separately on each rod instead:
+
+```py
+for rod in rods:
+    simulator.operate(rod).using(eaj.OneEndFixedJax)
+```
+
+True `jax_block_operate_*` hooks receive packed state directly and do not have
+this batching restriction; their implementation must handle the layout and
+its ghost padding correctly.
+
+
 `PyElastica-JAX` supports block-wise operation. This is partially tested on `PyElastica` and have shown great performance boost, but not fully included due to difficulties in customizing every operation to be block-wise and JIT compatible. This enables faster implementation-execution of large-scale (many rods) simulations, especially when operation needs to be applied to all rods at each step.
 
 This operation module provides two styles of operation: __block__ and __per-rod__. The default memory block packs rods **horizontally** into contiguous arrays with ghost padding so spanwise kernels stay isolated per rod.
@@ -347,6 +391,92 @@ body block, a muscle block, and eight cross-block surface joints.
 Cross-device rod-to-rod coupling between independent blocks is not yet supported.
 
 ## Advanced Usage
+
+### Custom rod physics
+
+A host Rod subclass alone does not install new runtime physics. The default
+Block evaluates the built-in linear Cosserat stress/couple laws from the packed
+material arrays. Changing `youngs_modulus` or `shear_modulus` needs no new Block.
+Changing the constitutive law itself requires implementing it in a JAX Block.
+There is currently no separate constitutive-function registration API.
+
+Use the following responsibilities when extending a Block:
+
+- Pack initial arrays and model parameters during `finalize()`.
+- Implement `jax_compute_internal_forces_and_torques(state, time)` as a pure
+  JAX transform. Use the supplied state and time; do not read mutable host rod
+  arrays inside the kernel or convert traced values to NumPy.
+- Handle ghost and periodic entries for the chosen layout. A horizontal Block
+  extension does not automatically extend the stacked implementation.
+- If adding evolving state, include it in the Block's state transforms and
+  explicitly implement its rod projection, synchronization, and Save/Load
+  behavior. The default field lists do not discover custom arrays.
+
+Here is a minimal extension adding axial viscous tension to the elastic law:
+`N_viscous = c * dilatation_rate`, where `c` has units of N s. It uses the
+horizontal Block's existing difference kernel to keep rods' loads isolated.
+This example supports open rods with the standard state fields. It adds a
+force contribution; `internal_stress` and `internal_couple` remain the elastic
+fields. A new field or periodic constitutive law needs its own packing and
+boundary treatment.
+
+```py
+from elastica_jax.memory_block.memory_block_rod_jax import (
+    _jax_two_point_difference_for_block_structure,
+)
+
+
+class AxialViscousBlock(eaj._CosseratRodMemoryBlock):
+    """Add axial viscous tension to the default elastic open-rod model."""
+
+    AXIAL_DAMPING = 0.1  # N s
+
+    def jax_compute_internal_forces_and_torques(
+        self, state: dict[str, jax.Array], time: eaj.JAXTime
+    ) -> dict[str, jax.Array]:
+        """Return elastic and axial viscous loads for the supplied state.
+
+        Parameters
+        ----------
+        state
+            Packed standard Cosserat collections on the device.
+        time
+            Current integration stage time.
+
+        Returns
+        -------
+        dict[str, jax.Array]
+            Updated geometry, strains, and internal loads.
+
+        Raises
+        ------
+        AssertionError
+            If the Block contains a ring rod.
+        """
+        assert not self.ring_rod_flag, "AxialViscousBlock supports only open rods."
+        updated = super().jax_compute_internal_forces_and_torques(state, time)
+        tension = self.AXIAL_DAMPING * updated["dilatation_rate"]
+        viscous_force = updated["tangents"] * tension[None, :]
+        updated["internal_forces"] = (
+            updated["internal_forces"]
+            + _jax_two_point_difference_for_block_structure(
+                viscous_force, self._device_metadata["ghost_elems_idx"]
+            )
+        )
+        # Tension follows the tangent, so it adds no material-frame torque.
+        return updated
+
+
+# Use this Block in place of configure_rod_block() in the basic tutorial.
+rod_block = eaj.configure_rod_block(inner_block_cls=AxialViscousBlock)
+simulator.enable_block_supports(ea.CosseratRod, rod_block)
+```
+
+The `_`-prefixed class and kernel are implementation interfaces and may change.
+This example intentionally exposes that dependency. For a larger extension,
+see the [muscle rod](examples/MuscleRod/muscle_rod.py) and its
+[matching JAX Block](examples/MuscleRod/memory_block_muscle_rods_jax.py), which
+show the separate host-model and runtime implementations.
 
 > The following advanced usage methods may require special care. They are not guaranteed to be compatible with each other unless explicitly specified, and should generally be used independently for correct behavior.
 > Scaling is not yet guaranteed to be optimal, and may depends on hardwares.

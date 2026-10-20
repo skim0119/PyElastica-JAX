@@ -117,6 +117,13 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         block_system: RodBlockProtocol,
         operators: Any | tuple[Any, ...],
     ) -> Callable[..., tuple[Any, ...]]:
+        rods = block_system.rods()
+        assert len({(rod.n_elems, rod.ring_rod_flag) for rod in rods}) == 1, (
+            "Block-wide per-rod operators require equal element counts and "
+            "the same open/ring topology. Register the operator separately "
+            "with `simulator.operate(rod).using(...)` for unequal rods."
+        )
+
         def apply(*, states, time):  # type: ignore[no-untyped-def]
             block_state = states[block_state_idx]
             updated_block_state = block_system.map_rods(
