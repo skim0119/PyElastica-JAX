@@ -6,7 +6,7 @@ jax.config.update("jax_enable_x64", True)
 
 from elastica.rod.cosserat_rod import CosseratRod  # noqa: E402
 from elastica_jax import NoBlockOpJax, Simulator, configure_rod_block  # noqa: E402
-from elastica_jax.memory_block.rod_local_map import RodLocalState  # noqa: E402
+from elastica_jax.memory_block.protocol import JAXBlockState, RodView  # noqa: E402
 
 
 class _ScaleExternalForces(NoBlockOpJax):
@@ -16,12 +16,12 @@ class _ScaleExternalForces(NoBlockOpJax):
 
     def jax_block_operate_synchronize(
         self,
-        state: dict[str, object],
+        state: JAXBlockState,
         time: np.float64,
-    ) -> dict[str, object]:
+    ) -> JAXBlockState:
         del time
         updated = dict(state)
-        updated["external_forces"] = state["external_forces"] * self.scale  # type: ignore[operator]
+        updated["external_forces"] = state["external_forces"] * self.scale
         return updated
 
 
@@ -32,9 +32,9 @@ class _ScaleExternalForcesPerRod(NoBlockOpJax):
 
     def jax_per_rod_operate_synchronize(
         self,
-        rod_view: RodLocalState,
+        rod_view: RodView,
         time: np.float64,
-    ) -> RodLocalState:
+    ) -> RodView:
         del time
         rod_view.external_forces = rod_view.external_forces * self.scale
         return rod_view
@@ -66,6 +66,10 @@ def test_operate_block_accepts_configured_block_instance() -> None:
         assert block is rod_block
 
         initial_state = block.jax_get_state()
+        forces = initial_state["external_forces"]
+        initial_state["external_forces"] = jax.numpy.arange(
+            1, forces.size + 1, dtype=forces.dtype
+        ).reshape(forces.shape)
         updated_state = simulator.jax_synchronize((initial_state,), np.float64(0.0))[0]
         np.testing.assert_allclose(
             np.asarray(updated_state["external_forces"]),
@@ -85,6 +89,10 @@ def test_operate_block_per_rod_uses_map_rods() -> None:
 
         block = tuple(simulator.final_systems())[0]
         initial_state = block.jax_get_state()
+        forces = initial_state["external_forces"]
+        initial_state["external_forces"] = jax.numpy.arange(
+            1, forces.size + 1, dtype=forces.dtype
+        ).reshape(forces.shape)
         updated_state = simulator.jax_synchronize((initial_state,), np.float64(0.0))[0]
         for rod_idx in range(2):
             start = int(block.start_idx_in_rod_nodes[rod_idx])
