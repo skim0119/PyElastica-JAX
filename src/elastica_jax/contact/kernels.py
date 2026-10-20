@@ -40,12 +40,49 @@ def scatter_element_loads(
     force: jax.Array,
     torque_world: jax.Array,
     directors: jax.Array,
+    rod_ids: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
+    """Scatter capsule loads into packed ``(3, N)`` or stacked ``(n_rods, 3, N)``.
+
+    Parameters
+    ----------
+    external_forces :
+        Packed ``(3, ...)`` or stacked ``(n_rods, 3, ...)`` force array.
+    external_torques :
+        Packed ``(3, ...)`` or stacked ``(n_rods, 3, ...)`` torque array.
+    element_indices :
+        Packed global element indices, or stacked local element indices.
+    force :
+        Per-capsule world-frame forces with shape ``(n_capsules, 3)``.
+    torque_world :
+        Per-capsule world-frame torques with shape ``(n_capsules, 3)``.
+    directors :
+        Per-capsule directors with shape ``(n_capsules, 3, 3)``.
+    rod_ids :
+        Required for stacked layout; ignored for packed ``(3, N)`` arrays.
+    """
     nodal_force = 0.5 * force
-    external_forces = external_forces.at[:, element_indices].add(nodal_force.T)
-    external_forces = external_forces.at[:, element_indices + 1].add(nodal_force.T)
     torque_material = jnp.einsum("nij,nj->ni", directors, torque_world)
-    external_torques = external_torques.at[:, element_indices].add(torque_material.T)
+    if external_forces.ndim == 2:
+        external_forces = external_forces.at[:, element_indices].add(nodal_force.T)
+        external_forces = external_forces.at[:, element_indices + 1].add(nodal_force.T)
+        external_torques = external_torques.at[:, element_indices].add(
+            torque_material.T
+        )
+        return external_forces, external_torques
+
+    assert external_forces.ndim == 3, (
+        "external_forces must be packed (3, N) or stacked (n_rods, 3, N)."
+    )
+    assert rod_ids is not None, "rod_ids are required for stacked scatter."
+    # Advanced index (rod_ids, :, element_indices) gathers (n_capsules, 3).
+    external_forces = external_forces.at[rod_ids, :, element_indices].add(nodal_force)
+    external_forces = external_forces.at[rod_ids, :, element_indices + 1].add(
+        nodal_force
+    )
+    external_torques = external_torques.at[rod_ids, :, element_indices].add(
+        torque_material
+    )
     return external_forces, external_torques
 
 
@@ -179,8 +216,18 @@ def apply_capsule_pair_forces(
     friction_coefficient: float = 0.0,
     static_velocity_threshold: float = 1.0,
     friction_gate: float | jax.Array = 1.0,
+    rod_ids: jax.Array | None = None,
+    owned_mask: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Fine-phase capsule contact on a bounded active pair list."""
+    """Fine-phase capsule contact on a bounded active pair list.
+
+    Parameters
+    ----------
+    owned_mask :
+        Optional per-capsule boolean mask. When provided, forces and torques on
+        capsules where the mask is False are zeroed before scatter so ghost
+        capsules can participate in pair detection without writing local loads.
+    """
     first = pair_first
     second = pair_second
     active_pair = pair_active & (first >= 0) & (second >= 0)
@@ -239,6 +286,10 @@ def apply_capsule_pair_forces(
     t1 = jnp.zeros_like(centers).at[first].add(jnp.cross(arm1, force))
     t2 = jnp.zeros_like(centers).at[second].add(jnp.cross(arm2, -force))
     total_force, total_torque = f1 + f2, t1 + t2
+    if owned_mask is not None:
+        owned = owned_mask.astype(total_force.dtype)[:, None]
+        total_force = total_force * owned
+        total_torque = total_torque * owned
     return (
         *scatter_element_loads(
             external_forces,
@@ -247,6 +298,7 @@ def apply_capsule_pair_forces(
             total_force,
             total_torque,
             directors,
+            rod_ids=rod_ids,
         ),
         broad_phase,
         last_detection_time,
@@ -269,6 +321,7 @@ def apply_wall_contacts(
     external_torques: jax.Array,
     contact_stiffness: float | jax.Array,
     contact_damping: float | jax.Array,
+    rod_ids: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     origins = jnp.asarray(wall_origins, dtype=centers.dtype)
     normals = jnp.asarray(wall_normals, dtype=centers.dtype)
@@ -301,4 +354,5 @@ def apply_wall_contacts(
         total_force,
         total_torque,
         directors,
+        rod_ids=rod_ids,
     )
