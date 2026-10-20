@@ -5,8 +5,8 @@ from typing import Any, Protocol, TypeAlias
 import numpy as np
 import jax.numpy as jnp
 
+from elastica_jax.memory_block.protocol import RodView
 from elastica_jax.memory_block.memory_block_rod_jax import (
-    JAXRodView,
     _CosseratRodMemoryBlock,
 )
 
@@ -43,23 +43,23 @@ class NoOpsJax:
 
     def jax_operate_constrain_values(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         return rod_view
 
     def jax_operate_synchronize(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         return rod_view
 
     def jax_operate_constrain_rates(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         return rod_view
 
 
@@ -76,9 +76,9 @@ class OneEndFixedJax(NoOpsJax):
 
     def jax_operate_constrain_values(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         rod_view.position_collection = rod_view.position_collection.at[:, 0].set(
             self.fixed_position_collection
         )
@@ -89,9 +89,9 @@ class OneEndFixedJax(NoOpsJax):
 
     def jax_operate_constrain_rates(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         rod_view.velocity_collection = rod_view.velocity_collection.at[:, 0].set(
             jnp.zeros(3, dtype=rod_view.velocity_collection.dtype)
         )
@@ -118,9 +118,9 @@ class EndpointForcesJax(NoOpsJax):
 
     def jax_operate_synchronize(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         factor = jnp.minimum(1.0, time / self.ramp_up_time)
         rod_view.external_forces = rod_view.external_forces.at[:, 0].add(
             self.start_force * factor
@@ -153,9 +153,9 @@ class GravityForcesJax(NoOpsJax):
 
     def jax_operate_synchronize(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         rod_view.external_forces = (
             rod_view.external_forces
             + self.acc_gravity[:, None] * rod_view.mass[None, :]
@@ -228,9 +228,9 @@ class AnalyticalLinearDamperJax(NoOpsJax):
 
     def jax_operate_constrain_rates(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         del time
         rod_view.velocity_collection = (
             rod_view.velocity_collection * self._translational_damping_coefficient
@@ -318,9 +318,9 @@ class GravityAnalyticalDamperJax(NoOpsJax):
 
     def jax_operate_synchronize(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         rod_view.external_forces = (
             rod_view.external_forces
             + self.acc_gravity[:, None] * rod_view.mass[None, :]
@@ -329,9 +329,9 @@ class GravityAnalyticalDamperJax(NoOpsJax):
 
     def jax_operate_constrain_rates(
         self,
-        rod_view: JAXRodView,
+        rod_view: RodView,
         time: JAXTime,
-    ) -> JAXRodView:
+    ) -> RodView:
         rod_view.velocity_collection = (
             rod_view.velocity_collection * self._translational_damping_coefficient
         )

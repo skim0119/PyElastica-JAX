@@ -20,8 +20,8 @@ class NoRodRodBlockOpJax:
     the updated views, or ``None`` to commit in-place mutations on the views
     passed in.
 
-    Both rods must currently reside in the same ``MemoryBlockCosseratRodJax`` on
-    one device.
+    Rods may reside in horizontal or stacked blocks, including separate blocks
+    on the same device.
     """
 
     def jax_operation(

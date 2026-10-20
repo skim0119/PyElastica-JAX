@@ -2,19 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Type
 
-import numpy as np
-
 from elastica_jax.rod_rod_operation import NoRodRodBlockOpJax
-from elastica_jax.memory_block.memory_block_rod_jax import (
-    JAXRodView,
-    JAXRodViewMetadata,
-    _CosseratRodMemoryBlock,
-)
+from elastica_jax.memory_block.protocol import JAXBlockState, RodView
 from elastica_jax.protocol import JAXPyTree, JAXScalar
 from elastica.typing import SystemIdxType, SystemProtocol
 
 from elastica.modules.protocol import SystemCollectionProtocol
-from .jax_ops import JAXBasicMixins, JAXStageCallable
+from .jax_ops import JAXBasicMixins, JAXStageCallable, RodTarget
 
 
 class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
@@ -22,7 +16,7 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
     Register JAX rod-to-rod interaction operators.
 
     Pair interactions such as rod-rod contact are applied through rod-local views
-    into one or two packed blocks. Rods may live in the same block or in
+    into one or two blocks, regardless of layout. Rods may live in the same block or in
     separate blocks on the same device; cross-device coupling is not supported.
     """
 
@@ -48,11 +42,13 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
     def _wrap_jax_rod2rod_operator(
         cls,
         *,
-        first_metadata: JAXRodViewMetadata,
-        second_metadata: JAXRodViewMetadata,
+        first_target: RodTarget,
+        second_target: RodTarget,
         operator: Any,
     ) -> JAXStageCallable:
-        same_block = first_metadata.block_state_idx == second_metadata.block_state_idx
+        first_idx, first_rod_idx, first_block = first_target
+        second_idx, second_rod_idx, second_block = second_target
+        same_block = first_idx == second_idx
 
         def apply(
             *,
@@ -60,13 +56,13 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
             time: JAXScalar,
         ) -> tuple[JAXPyTree, ...]:
             if same_block:
-                block_state = states[first_metadata.block_state_idx]
-                shared_updates: dict[str, Any] = {}
-                rod_one_view = JAXRodView(
-                    block_state, first_metadata, updates=shared_updates
+                block_state = states[first_idx]
+                shared_updates: JAXBlockState = {}
+                rod_one_view = first_block.rod_view(
+                    block_state, first_rod_idx, updates=shared_updates
                 )
-                rod_two_view = JAXRodView(
-                    block_state, second_metadata, updates=shared_updates
+                rod_two_view = second_block.rod_view(
+                    block_state, second_rod_idx, updates=shared_updates
                 )
                 updated_views = operator(rod_one_view, rod_two_view, time)
 
@@ -76,18 +72,18 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
                     updated_rod_one_view, _updated_rod_two_view = updated_views
                     committed_state = (
                         updated_rod_one_view.commit()
-                        if isinstance(updated_rod_one_view, JAXRodView)
+                        if isinstance(updated_rod_one_view, RodView)
                         else rod_one_view.commit()
                     )
 
                 updated_states = list(states)
-                updated_states[first_metadata.block_state_idx] = committed_state
+                updated_states[first_idx] = committed_state
                 return tuple(updated_states)
 
-            rod_one_state = states[first_metadata.block_state_idx]
-            rod_two_state = states[second_metadata.block_state_idx]
-            rod_one_view = JAXRodView(rod_one_state, first_metadata)
-            rod_two_view = JAXRodView(rod_two_state, second_metadata)
+            rod_one_state = states[first_idx]
+            rod_two_state = states[second_idx]
+            rod_one_view = first_block.rod_view(rod_one_state, first_rod_idx)
+            rod_two_view = second_block.rod_view(rod_two_state, second_rod_idx)
             updated_views = operator(rod_one_view, rod_two_view, time)
 
             if updated_views is None:
@@ -97,18 +93,18 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
                 updated_rod_one_view, updated_rod_two_view = updated_views
                 committed_rod_one_state = (
                     updated_rod_one_view.commit()
-                    if isinstance(updated_rod_one_view, JAXRodView)
+                    if isinstance(updated_rod_one_view, RodView)
                     else rod_one_view.commit()
                 )
                 committed_rod_two_state = (
                     updated_rod_two_view.commit()
-                    if isinstance(updated_rod_two_view, JAXRodView)
+                    if isinstance(updated_rod_two_view, RodView)
                     else rod_two_view.commit()
                 )
 
             updated_states = list(states)
-            updated_states[first_metadata.block_state_idx] = committed_rod_one_state
-            updated_states[second_metadata.block_state_idx] = committed_rod_two_state
+            updated_states[first_idx] = committed_rod_one_state
+            updated_states[second_idx] = committed_rod_two_state
             return tuple(updated_states)
 
         return apply
@@ -117,11 +113,8 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
         final_systems = tuple(self.final_systems())
 
         for jax_op in self._jax_rod2rod_ops_list:
-            first_metadata, second_metadata = self._make_rod_pair_view_metadata(
-                final_systems,
-                jax_op.first_id(),
-                jax_op.second_id(),
-            )
+            first_target = self._find_rod_target(final_systems, jax_op.first_id())
+            second_target = self._find_rod_target(final_systems, jax_op.second_id())
             op_instance = jax_op.instantiate(
                 first_system=self[jax_op.first_id()],
                 second_system=self[jax_op.second_id()],
@@ -137,8 +130,8 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
                     f"{type(op_instance)} must override `jax_operation`."
                 )
             wrapped = self._wrap_jax_rod2rod_operator(
-                first_metadata=first_metadata,
-                second_metadata=second_metadata,
+                first_target=first_target,
+                second_target=second_target,
                 operator=method,
             )
             self._feature_group_synchronize.append_id(jax_op)
@@ -146,64 +139,6 @@ class JAXInteraction(JAXBasicMixins, SystemCollectionProtocol):
 
         self._jax_rod2rod_ops_list = []
         del self._jax_rod2rod_ops_list
-
-    @classmethod
-    def _rod_view_metadata_in_block(
-        cls,
-        *,
-        block_state_idx: int,
-        system: _CosseratRodMemoryBlock,
-        local_idx: int,
-    ) -> JAXRodViewMetadata:
-        return JAXRodViewMetadata(
-            block_state_idx=block_state_idx,
-            node_slice=slice(
-                int(system.start_idx_in_rod_nodes[local_idx]),
-                int(system.end_idx_in_rod_nodes[local_idx]),
-            ),
-            element_slice=slice(
-                int(system.start_idx_in_rod_elems[local_idx]),
-                int(system.end_idx_in_rod_elems[local_idx]),
-            ),
-            voronoi_slice=slice(
-                int(system.start_idx_in_rod_voronoi[local_idx]),
-                int(system.end_idx_in_rod_voronoi[local_idx]),
-            ),
-        )
-
-    @classmethod
-    def _make_rod_pair_view_metadata(
-        cls,
-        final_systems: tuple[object, ...],
-        first_sys_idx: SystemIdxType,
-        second_sys_idx: SystemIdxType,
-    ) -> tuple[JAXRodViewMetadata, JAXRodViewMetadata]:
-        first_metadata: JAXRodViewMetadata | None = None
-        second_metadata: JAXRodViewMetadata | None = None
-        for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, _CosseratRodMemoryBlock):
-                continue
-            first_matches = np.where(system.system_idx_list == first_sys_idx)[0]
-            if first_matches.size > 0 and first_metadata is None:
-                first_metadata = cls._rod_view_metadata_in_block(
-                    block_state_idx=block_state_idx,
-                    system=system,
-                    local_idx=int(first_matches[0]),
-                )
-            second_matches = np.where(system.system_idx_list == second_sys_idx)[0]
-            if second_matches.size > 0 and second_metadata is None:
-                second_metadata = cls._rod_view_metadata_in_block(
-                    block_state_idx=block_state_idx,
-                    system=system,
-                    local_idx=int(second_matches[0]),
-                )
-
-        if first_metadata is None or second_metadata is None:
-            raise RuntimeError(
-                "Requested rod pair was not found in finalized "
-                "_CosseratRodMemoryBlock systems."
-            )
-        return first_metadata, second_metadata
 
 
 class _JAXRodRodOp:

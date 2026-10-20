@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import Any, Callable, Type
+from typing import Any, Callable, Type, cast
 
 import numpy as np
 
 from elastica_jax.operations import NoOpsJax
-from elastica_jax.memory_block.memory_block_rod_jax import (
-    _CosseratRodMemoryBlock,
-    JAXRodView,
-    JAXRodViewMetadata,
-)
+from elastica_jax.memory_block.protocol import RodBlockProtocol, RodView
 from elastica_jax.protocol import JAXPyTree, JAXScalar
 from elastica.typing import SystemIdxType
 
@@ -21,6 +17,8 @@ _STAGE_METHODS = (
     ("synchronize", "jax_operate_synchronize"),
     ("constrain_rates", "jax_operate_constrain_rates"),
 )
+
+type RodTarget = tuple[int, int, RodBlockProtocol]
 
 JAXStageCallable = Callable[..., tuple[JAXPyTree, ...]]
 
@@ -63,6 +61,23 @@ class JAXBasicMixins:
             states = func(states=states, time=time)
         return states
 
+    @staticmethod
+    def _find_rod_target(
+        final_systems: tuple[object, ...],
+        sys_id: SystemIdxType,
+    ) -> RodTarget:
+        for block_idx, system in enumerate(final_systems):
+            if not callable(getattr(system, "rod_view", None)):
+                continue
+            block = cast(RodBlockProtocol, system)
+            matches = np.flatnonzero(block.system_idx_list == sys_id)
+            if matches.size:
+                return block_idx, int(matches[0]), block
+        raise RuntimeError(
+            "JAX operator target rod was not found in finalized JAX blocks. "
+            "Enable JAX block support for the rod type before finalize()."
+        )
+
 
 class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
     """
@@ -86,24 +101,26 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
     def _wrap_jax_rod_operator(
         cls,
         *,
-        metadata: JAXRodViewMetadata,
+        target: RodTarget,
         operator: Any,
     ) -> JAXStageCallable:
+        block_idx, rod_idx, block = target
+
         def apply(
             *,
             states: tuple[JAXPyTree, ...],
             time: JAXScalar,
         ) -> tuple[JAXPyTree, ...]:
-            block_state = states[metadata.block_state_idx]
-            rod_view = JAXRodView(block_state, metadata)
+            block_state = states[block_idx]
+            rod_view = block.rod_view(block_state, rod_idx)
             updated_view = operator(rod_view, time)
             committed_state = (
                 updated_view.commit()
-                if isinstance(updated_view, JAXRodView)
+                if isinstance(updated_view, RodView)
                 else rod_view.commit()
             )
             updated_states = list(states)
-            updated_states[metadata.block_state_idx] = committed_state
+            updated_states[block_idx] = committed_state
             return tuple(updated_states)
 
         return apply
@@ -115,7 +132,7 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
         for jax_op in self._jax_ops_list:
             sys_id = jax_op.id()
             op_instance = jax_op.instantiate(self[sys_id])
-            metadata = self._make_jax_rod_view_metadata(final_systems, sys_id)
+            target = self._find_rod_target(final_systems, sys_id)
             staged_wrappers = []
             for stage, method_name in _STAGE_METHODS:
                 method = getattr(op_instance, method_name, None)
@@ -126,7 +143,7 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
                 ):
                     continue
                 wrapped = self._wrap_jax_rod_operator(
-                    metadata=metadata,
+                    target=target,
                     operator=method,
                 )
                 staged_wrappers.append((stage, wrapped))
@@ -159,38 +176,6 @@ class JAXOps(JAXBasicMixins, SystemCollectionProtocol):
             return self._feature_group_synchronize
         return self._feature_group_constrain_rates
 
-    def _make_jax_rod_view_metadata(
-        self,
-        final_systems: tuple[object, ...],
-        sys_id: SystemIdxType,
-    ) -> JAXRodViewMetadata:
-        for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, _CosseratRodMemoryBlock):
-                continue
-            matches = np.where(system.system_idx_list == sys_id)[0]
-            if matches.size == 0:
-                continue
-            local_idx = int(matches[0])
-            return JAXRodViewMetadata(
-                block_state_idx=block_state_idx,
-                node_slice=slice(
-                    int(system.start_idx_in_rod_nodes[local_idx]),
-                    int(system.end_idx_in_rod_nodes[local_idx]),
-                ),
-                element_slice=slice(
-                    int(system.start_idx_in_rod_elems[local_idx]),
-                    int(system.end_idx_in_rod_elems[local_idx]),
-                ),
-                voronoi_slice=slice(
-                    int(system.start_idx_in_rod_voronoi[local_idx]),
-                    int(system.end_idx_in_rod_voronoi[local_idx]),
-                ),
-            )
-        raise RuntimeError(
-            "JAX operator target system was not found in a _CosseratRodMemoryBlock. "
-            "Enable JAX block support for the rod type before finalize()."
-        )
-
 
 class _JAXOp:
     def __init__(self, sys_idx: SystemIdxType) -> None:
@@ -219,6 +204,6 @@ class _JAXOp:
         if not hasattr(self, "_op_cls"):
             raise RuntimeError(
                 "No JAX operator provided. Did you forget to call "
-                "`simulator.using(system).operate(...)`?"
+                "`simulator.operate(system).using(...)`?"
             )
         return self._op_cls(*self._args, _system=system, **self._kwargs)

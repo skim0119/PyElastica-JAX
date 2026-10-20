@@ -17,6 +17,7 @@ class RodViewMetadata(Protocol):
     def slice_for_attr(self, attr: str) -> slice: ...
 
 
+@runtime_checkable
 class RodView(Protocol):
     """Rod-shaped projection passed to ``map_rods`` operators."""
 
@@ -49,6 +50,33 @@ class RodBlockProtocol(Protocol):
     ``finalize()``. The same object then appears in ``final_systems()``.
     Position Verlet only invokes the pure ``jax_*`` methods on this face.
     """
+
+    system_idx_list: np.ndarray
+
+    def rod_view(
+        self,
+        state: JAXBlockState,
+        rod_idx: int,
+        *,
+        updates: JAXBlockState | None = None,
+    ) -> RodView:
+        """Project one rod from explicit state; commit returns full Block state.
+
+        Parameters
+        ----------
+        state
+            Authoritative Block state.
+        rod_idx
+            Index in block rod order.
+        updates
+            Shared pending writes for coupled views in the same Block.
+
+        Returns
+        -------
+        RodView
+            Rod-local view whose commit includes shared pending writes.
+        """
+        ...
 
     def __init__(
         self,
