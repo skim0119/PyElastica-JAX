@@ -6,6 +6,7 @@ import csv
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from click.testing import CliRunner
 
@@ -159,23 +160,46 @@ def test_gpu2x_cli_forwards_n_devices_to_scaling_benchmark(
     assert seen["output_plot"] == plot
 
 
-def test_build_horizontal_mpiexec_splits_rods_across_two_ranks() -> None:
-    from sweep_jax_rod_contact_gpu2x_throughput import (
-        _build_horizontal_mpiexec_command,
-    )
+def test_horizontal_sweep_reuses_mpi_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Split rods across two ranks and report the slowest rank's rollout."""
+    from sweep_jax_rod_contact_gpu2x_throughput import sweep_horizontal_mpi
+    from sweep_jax_rod_contact_mpi_throughput import RolloutPoint
 
-    command = _build_horizontal_mpiexec_command(
-        n_rods_exp=4,
+    seen: dict[str, object] = {}
+
+    def fake_run_mpi_point(**kwargs: object) -> RolloutPoint:
+        seen.update(kwargs)
+        return 2, 8, 16, np.asarray([0.3, 0.2])
+
+    monkeypatch.setattr(
+        "sweep_jax_rod_contact_gpu2x_throughput.run_mpi_point", fake_run_mpi_point
+    )
+    points = sweep_horizontal_mpi(
+        "cuda",
+        4,
+        4,
         python_executable="/usr/bin/python",
         steps=10,
         warmup_runs=0,
-        backend="cuda",
         n_elements=10,
         steps_between_detection=0,
         broad_phase="spatial_hash",
+        verbose=False,
     )
-    assert command[:3] == ["ibrun", "-n", "2"]
-    assert "--rods-per-rank-exp" in command
-    exp_idx = command.index("--rods-per-rank-exp")
-    assert command[exp_idx + 1] == "3"
-    assert "--vertical" not in command
+
+    assert seen == {
+        "mpi_size": 2,
+        "rods_per_rank_exp": 3,
+        "rods_per_rank_multiplier": 1,
+        "vertical": False,
+        "python_executable": "/usr/bin/python",
+        "steps": 10,
+        "warmup_runs": 0,
+        "backend": "cuda",
+        "n_elements": 10,
+        "steps_between_detection": 0,
+        "broad_phase": "spatial_hash",
+    }
+    assert points == [(4, 16, 0.0, 0.3)]

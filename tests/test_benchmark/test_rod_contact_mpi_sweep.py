@@ -20,6 +20,7 @@ from sweep_jax_rod_contact_mpi_throughput import (  # noqa: E402
     build_mpiexec_command,
     export_scaling_csv,
     flatten_rollout_samples,
+    load_scaling_csv,
     parse_rollout_walltimes,
 )
 from _rod_contact_common import (  # noqa: E402
@@ -115,6 +116,14 @@ def test_export_scaling_csv_is_long_form_with_vertical(tmp_path: Path) -> None:
     assert rows[0]["backend"] == "cuda"
     assert rows[2]["n_rods"] == "16"
     assert rows[2]["rollout_walltime_s"] == "0.12"
+
+    with output.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(reversed(rows))
+    loaded_points, *configuration = load_scaling_csv(output)
+    assert configuration == ["cuda", 3, 1, 200, True, 10, 0, "spatial_hash"]
+    assert flatten_rollout_samples(loaded_points) == flatten_rollout_samples(points)
 
 
 def test_flatten_rollout_samples_expands_ranks() -> None:

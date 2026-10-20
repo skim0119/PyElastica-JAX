@@ -105,7 +105,6 @@ def assemble_mpi_halo_kinematics(
         "lengths": _allgather_capsules(kinematics["lengths"], comm=comm),
         "radii": _allgather_capsules(kinematics["radii"], comm=comm),
         "omega": _allgather_capsules(kinematics["omega"], comm=comm),
-        "directors": _allgather_capsules(kinematics["directors"], comm=comm),
         "rod_ids": _allgather_capsules(local_global_rod_ids, comm=comm),
     }
     n_global = n_local * world_size

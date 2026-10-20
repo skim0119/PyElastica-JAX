@@ -6,12 +6,10 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-import click
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from _rod_contact_common import N_ELEMENTS
 from jax_rod_contact_throughput import ThroughputConfig, run as run_throughput
 
 type SweepPoint = tuple[int, int, float, float]
@@ -252,84 +250,3 @@ def run_scaling_benchmark(
         n_elements=n_elements,
         output=output_plot,
     )
-
-
-def scaling_cli(
-    backend: str,
-    default_plot: str,
-    *,
-    allow_vertical: bool = True,
-) -> click.Command:
-    """Return a click command configured for one backend."""
-
-    @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-    @click.option("--min-exp", type=int, default=1, show_default=True)
-    @click.option("--max-exp", type=int, default=8, show_default=True)
-    @click.option("--steps", type=int, default=200, show_default=True)
-    @click.option("--warmup-runs", type=int, default=1, show_default=True)
-    @click.option("--n-elements", type=int, default=N_ELEMENTS, show_default=True)
-    @click.option(
-        "--steps-between-detection",
-        type=int,
-        default=0,
-        show_default=True,
-        help="Broad-phase refresh interval (0 = every step).",
-    )
-    @click.option(
-        "--broad-phase",
-        type=click.Choice(["spatial_hash", "all_pairs"]),
-        default="spatial_hash",
-        show_default=True,
-        help="JAX contact broad-phase strategy.",
-    )
-    @click.option(
-        "--vertical",
-        is_flag=True,
-        help="Use stacked vertical rod memory block (JAX only).",
-    )
-    @click.option(
-        "--output",
-        type=click.Path(path_type=Path),
-        default=Path(default_plot),
-        show_default=True,
-        help="Output path for the scaling plot.",
-    )
-    @click.option(
-        "--csv-output",
-        type=click.Path(path_type=Path),
-        default=None,
-        help="CSV path (default: plot path with .csv suffix).",
-    )
-    @click.option("--quiet", is_flag=True, help="Disable progress bars.")
-    def main(
-        min_exp: int,
-        max_exp: int,
-        steps: int,
-        warmup_runs: int,
-        n_elements: int,
-        steps_between_detection: int,
-        broad_phase: str,
-        vertical: bool,
-        output: Path,
-        csv_output: Path | None,
-        quiet: bool,
-    ) -> None:
-        """Sweep rod count and plot rollout wall time for rod-rod contact."""
-        if vertical:
-            assert allow_vertical, f"Backend {backend!r} does not support --vertical."
-        run_scaling_benchmark(
-            backend=backend,
-            min_exp=min_exp,
-            max_exp=max_exp,
-            steps=steps,
-            warmup_runs=warmup_runs,
-            n_elements=n_elements,
-            steps_between_detection=steps_between_detection,
-            broad_phase=broad_phase,
-            vertical=vertical,
-            output_plot=output,
-            output_csv=csv_output,
-            verbose=not quiet,
-        )
-
-    return main

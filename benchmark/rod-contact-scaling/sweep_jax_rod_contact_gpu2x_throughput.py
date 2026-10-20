@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -22,9 +19,8 @@ from _rod_contact_scaling_sweep import (
     series_label,
 )
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
-JAX_MPI_WORKER = SCRIPT_DIR / "jax_rod_contact_mpi_throughput.py"
+from sweep_jax_rod_contact_mpi_throughput import run_mpi_point
+
 N_DEVICES = 2
 
 type SweepPoint = tuple[int, int, float, float]
@@ -35,72 +31,6 @@ def _backend_available(name: str, *, n_devices: int = N_DEVICES) -> bool:
         return len(jax.devices(name)) >= n_devices
     except RuntimeError:
         return False
-
-
-def _parse_rollout_walltimes(output: str) -> np.ndarray:
-    match = re.search(r"rollout_walltimes=([0-9eE+.,-]+)", output)
-    assert match is not None, f"Could not parse rollout walltimes from:\n{output}"
-    values = tuple(
-        float(item) for item in match.group(1).split(",") if item.strip() != ""
-    )
-    assert values, f"Parsed empty rollout walltime list from:\n{output}"
-    return np.asarray(values, dtype=np.float64)
-
-
-def _mpi_worker_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.update(
-        {
-            "OMP_NUM_THREADS": "1",
-            "OPENBLAS_NUM_THREADS": "1",
-            "MKL_NUM_THREADS": "1",
-            "NUMEXPR_NUM_THREADS": "1",
-            "NUMBA_NUM_THREADS": "1",
-        }
-    )
-    return env
-
-
-def _build_horizontal_mpiexec_command(
-    *,
-    n_rods_exp: int,
-    python_executable: str,
-    steps: int,
-    warmup_runs: int,
-    backend: str,
-    n_elements: int,
-    steps_between_detection: int,
-    broad_phase: str,
-) -> list[str]:
-    """Build ``ibrun -n 2`` for one horizontal two-GPU sample.
-
-    Global ``n_rods = 2 ** n_rods_exp`` is split evenly across two ranks, so
-    each rank owns ``2 ** (n_rods_exp - 1)`` rods.
-    """
-    assert n_rods_exp >= 1, "horizontal gpu2x requires n_rods_exp >= 1."
-    return [
-        "ibrun",
-        "-n",
-        str(N_DEVICES),
-        python_executable,
-        str(JAX_MPI_WORKER),
-        "--backend",
-        backend,
-        "--rods-per-rank-exp",
-        str(n_rods_exp - 1),
-        "--rods-per-rank-multiplier",
-        "1",
-        "--steps",
-        str(steps),
-        "--warmup-runs",
-        str(warmup_runs),
-        "--n-elements",
-        str(n_elements),
-        "--steps-between-detection",
-        str(steps_between_detection),
-        "--broad-phase",
-        broad_phase,
-    ]
 
 
 def sweep_horizontal_mpi(
@@ -126,8 +56,11 @@ def sweep_horizontal_mpi(
         desc=f"{label} rod-rod contact",
         disable=not verbose,
     ):
-        command = _build_horizontal_mpiexec_command(
-            n_rods_exp=exponent,
+        _, _, n_rods, walltimes = run_mpi_point(
+            mpi_size=N_DEVICES,
+            rods_per_rank_exp=exponent - 1,
+            rods_per_rank_multiplier=1,
+            vertical=False,
             python_executable=python_executable,
             steps=steps,
             warmup_runs=warmup_runs,
@@ -136,17 +69,7 @@ def sweep_horizontal_mpi(
             steps_between_detection=steps_between_detection,
             broad_phase=broad_phase,
         )
-        completed = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-            env=_mpi_worker_env(),
-        )
-        walltimes = _parse_rollout_walltimes(completed.stdout)
         rollout_seconds = float(np.max(walltimes))
-        n_rods = 2**exponent
         print(
             f"{label} n_rods={n_rods} (2^{exponent}): "
             f"rollout={rollout_seconds:.6f}s (max over {walltimes.size} ranks)"
