@@ -5,7 +5,12 @@ jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 
 from elastica.rod.cosserat_rod import CosseratRod  # noqa: E402
-from elastica_jax import NoBlockOpJax, Simulator, configure_rod_block  # noqa: E402
+from elastica_jax import (  # noqa: E402
+    NoBlockOpJax,
+    OneEndFixedJax,
+    Simulator,
+    configure_rod_block,
+)
 from elastica_jax.memory_block.protocol import JAXBlockState, RodView  # noqa: E402
 
 
@@ -101,3 +106,47 @@ def test_operate_block_per_rod_uses_map_rods() -> None:
                 np.asarray(updated_state["external_forces"])[:, start:end],
                 4.0 * np.asarray(initial_state["external_forces"])[:, start:end],
             )
+
+
+@pytest.mark.parametrize("operator_cls", [_ScaleExternalForcesPerRod, OneEndFixedJax])
+def test_per_rod_block_operators_reject_incompatible_rods_at_finalize(
+    operator_cls: type[NoBlockOpJax] | type[OneEndFixedJax],
+) -> None:
+    """Reject unsupported batching before the first integration call."""
+    simulator = Simulator()
+    block = configure_rod_block()
+    simulator.enable_block_supports(CosseratRod, block)
+    simulator.append(_build_rod())
+    second = _build_rod(n_elems=6)
+    simulator.append(second)
+    kwargs = {"scale": 2.0} if operator_cls is _ScaleExternalForcesPerRod else {}
+    simulator.operate_block(block).using(operator_cls, **kwargs)
+
+    with pytest.raises(AssertionError, match=r"simulator\.operate\(rod\)"):
+        simulator.finalize()
+
+
+@pytest.mark.parametrize("per_rod_registration", [False, True])
+def test_unequal_rods_support_unbatched_operations(
+    per_rod_registration: bool,
+) -> None:
+    """Keep native Block hooks and separate rod registrations available."""
+    simulator = Simulator()
+    block = configure_rod_block()
+    simulator.enable_block_supports(CosseratRod, block)
+    rods = [_build_rod(), _build_rod(n_elems=6)]
+    for rod in rods:
+        simulator.append(rod)
+        if per_rod_registration:
+            simulator.operate(rod).using(OneEndFixedJax)
+    if not per_rod_registration:
+        simulator.operate_block(block).using(_ScaleExternalForces, scale=2.0)
+    simulator.finalize()
+
+    state = block.jax_get_state()
+    forces = jax.numpy.ones_like(state["external_forces"])
+    state["external_forces"] = forces
+    result = jax.jit(simulator.jax_synchronize)((state,), 0.0)[0]
+
+    expected_scale = 1.0 if per_rod_registration else 2.0
+    np.testing.assert_allclose(result["external_forces"], expected_scale * forces)
