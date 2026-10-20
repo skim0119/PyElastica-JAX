@@ -372,15 +372,12 @@ def load_scaling_csv(
     steps_between_detection = int(rows[0]["steps_between_detection"])
     broad_phase = rows[0]["broad_phase"]
 
-    grouped_rows: list[tuple[int, list[dict[str, str]]]] = []
+    points: list[RolloutPoint] = []
     for mpi_size, mpi_size_rows_iter in itertools.groupby(
         sorted(rows, key=lambda row: (int(row["mpi_size"]), int(row["rank"]))),
         key=lambda row: int(row["mpi_size"]),
     ):
-        grouped_rows.append((mpi_size, list(mpi_size_rows_iter)))
-
-    points: list[RolloutPoint] = []
-    for mpi_size, mpi_size_rows in grouped_rows:
+        mpi_size_rows = list(mpi_size_rows_iter)
         first_row = mpi_size_rows[0]
         points.append(
             (
@@ -388,12 +385,7 @@ def load_scaling_csv(
                 int(first_row["rods_per_rank"]),
                 int(first_row["n_rods"]),
                 np.asarray(
-                    [
-                        float(row["rollout_walltime_s"])
-                        for row in sorted(
-                            mpi_size_rows, key=lambda row: int(row["rank"])
-                        )
-                    ],
+                    [float(row["rollout_walltime_s"]) for row in mpi_size_rows],
                     dtype=np.float64,
                 ),
             )
