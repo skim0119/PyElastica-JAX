@@ -10,16 +10,12 @@ from elastica_jax.memory_block.memory_block_rigid_body_jax import (
     JAXRigidBodyViewMetadata,
     MemoryBlockRigidBodyJax,
 )
-from elastica_jax.memory_block.memory_block_rod_jax import (
-    JAXRodView,
-    JAXRodViewMetadata,
-    _CosseratRodMemoryBlock,
-)
+from elastica_jax.memory_block.protocol import RodView
 from elastica_jax.protocol import JAXPyTree, JAXScalar
 from elastica.typing import SystemIdxType, SystemProtocol
 
 from elastica.modules.protocol import SystemCollectionProtocol
-from .jax_ops import JAXBasicMixins, JAXStageCallable
+from .jax_ops import JAXBasicMixins, JAXStageCallable, RodTarget
 
 _STAGE_METHODS = (
     ("constrain_values", "jax_operate_constrain_values"),
@@ -55,18 +51,20 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
     def _wrap_jax_rod_rigid_body_operator(
         cls,
         *,
-        rod_metadata: JAXRodViewMetadata,
+        rod_target: RodTarget,
         rigid_body_metadata: JAXRigidBodyViewMetadata,
         operator: Any,
     ) -> JAXStageCallable:
+        rod_block_idx, rod_idx, rod_block = rod_target
+
         def apply(
             *,
             states: tuple[JAXPyTree, ...],
             time: JAXScalar,
         ) -> tuple[JAXPyTree, ...]:
-            rod_state = states[rod_metadata.block_state_idx]
+            rod_state = states[rod_block_idx]
             rigid_body_state = states[rigid_body_metadata.block_state_idx]
-            rod_view = JAXRodView(rod_state, rod_metadata)
+            rod_view = rod_block.rod_view(rod_state, rod_idx)
             rigid_body_view = JAXRigidBodyView(rigid_body_state, rigid_body_metadata)
             updated_views = operator(rod_view, rigid_body_view, time)
 
@@ -77,7 +75,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
                 updated_rod_view, updated_rigid_body_view = updated_views
                 committed_rod_state = (
                     updated_rod_view.commit()
-                    if isinstance(updated_rod_view, JAXRodView)
+                    if isinstance(updated_rod_view, RodView)
                     else rod_view.commit()
                 )
                 committed_rigid_body_state = (
@@ -87,7 +85,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
                 )
 
             updated_states = list(states)
-            updated_states[rod_metadata.block_state_idx] = committed_rod_state
+            updated_states[rod_block_idx] = committed_rod_state
             updated_states[rigid_body_metadata.block_state_idx] = (
                 committed_rigid_body_state
             )
@@ -99,9 +97,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
         final_systems = tuple(self.final_systems())
 
         for jax_op in self._jax_rod_rigid_body_ops_list:
-            rod_metadata = self._make_jax_rod_view_metadata(
-                final_systems, jax_op.rod_id()
-            )
+            rod_target = self._find_rod_target(final_systems, jax_op.rod_id())
             rigid_body_metadata = self._make_jax_rigid_body_view_metadata(
                 final_systems, jax_op.rigid_body_id()
             )
@@ -120,7 +116,7 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
                 ):
                     continue
                 wrapped = self._wrap_jax_rod_rigid_body_operator(
-                    rod_metadata=rod_metadata,
+                    rod_target=rod_target,
                     rigid_body_metadata=rigid_body_metadata,
                     operator=method,
                 )
@@ -153,38 +149,6 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
         if stage == "synchronize":
             return self._feature_group_synchronize
         return self._feature_group_constrain_rates
-
-    def _make_jax_rod_view_metadata(
-        self,
-        final_systems: tuple[object, ...],
-        sys_id: SystemIdxType,
-    ) -> JAXRodViewMetadata:
-        for block_state_idx, system in enumerate(final_systems):
-            if not isinstance(system, _CosseratRodMemoryBlock):
-                continue
-            matches = np.where(system.system_idx_list == sys_id)[0]
-            if matches.size == 0:
-                continue
-            local_idx = int(matches[0])
-            return JAXRodViewMetadata(
-                block_state_idx=block_state_idx,
-                node_slice=slice(
-                    int(system.start_idx_in_rod_nodes[local_idx]),
-                    int(system.end_idx_in_rod_nodes[local_idx]),
-                ),
-                element_slice=slice(
-                    int(system.start_idx_in_rod_elems[local_idx]),
-                    int(system.end_idx_in_rod_elems[local_idx]),
-                ),
-                voronoi_slice=slice(
-                    int(system.start_idx_in_rod_voronoi[local_idx]),
-                    int(system.end_idx_in_rod_voronoi[local_idx]),
-                ),
-            )
-        raise RuntimeError(
-            "Mixed JAX operator target rod was not found in a _CosseratRodMemoryBlock. "
-            "Enable JAX block support for the rod type before finalize()."
-        )
 
     def _make_jax_rigid_body_view_metadata(
         self,

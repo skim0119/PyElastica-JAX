@@ -6,7 +6,11 @@ jax.config.update("jax_enable_x64", True)
 
 from elastica import Sphere
 from elastica.rod.cosserat_rod import CosseratRod
+from elastica_jax.memory_block.protocol import RodBlockProtocol, RodView
+from elastica_jax.memory_block.memory_block_rigid_body_jax import JAXRigidBodyView
 from elastica_jax import (
+    _CosseratRodMemoryBlock,
+    _CosseratRodVerticalMemoryBlock,
     MemoryBlockRigidBodyJax,
     NoRodRigidBodyJax,
     Simulator,
@@ -15,12 +19,15 @@ from elastica_jax import (
 
 
 class _CoupleRodAndRigidBody(NoRodRigidBodyJax):
-    def __init__(
-        self, scale: float, *, _first_system=None, _second_system=None
-    ) -> None:
+    def __init__(self, scale: float, **kwargs: object) -> None:
         self.scale = np.float64(scale)
 
-    def jax_operate_synchronize(self, rod_view, rigid_body_view, time):
+    def jax_operate_synchronize(
+        self,
+        rod_view: RodView,
+        rigid_body_view: JAXRigidBodyView,
+        time: np.float64,
+    ) -> tuple[RodView, JAXRigidBodyView]:
         rod_force = self.scale * rigid_body_view.mass[None, :]
         rigid_force = self.scale * rod_view.mass[:1].sum()[None, None]
         rod_view.external_forces = rod_view.external_forces + rod_force
@@ -49,7 +56,7 @@ def _build_sphere() -> Sphere:
     )
 
 
-def test_jax_rod_rigid_body_compatible_defaults_to_identity_transforms():
+def test_jax_rod_rigid_body_compatible_defaults_to_identity_transforms() -> None:
     simulator = Simulator()
     states = ({"value": 1.0}, {"value": 2.0})
 
@@ -58,10 +65,17 @@ def test_jax_rod_rigid_body_compatible_defaults_to_identity_transforms():
     assert simulator.jax_constrain_rates(states, np.float64(0.0)) == states
 
 
-def test_jax_rod_rigid_body_finalize_wraps_pair_views_into_stage_operator():
+@pytest.mark.parametrize(
+    "block_cls", [_CosseratRodMemoryBlock, _CosseratRodVerticalMemoryBlock]
+)
+def test_jax_rod_rigid_body_finalize_wraps_pair_views_into_stage_operator(
+    block_cls: type[RodBlockProtocol],
+) -> None:
     with jax.default_device(jax.devices("cpu")[0]):
         simulator = Simulator()
-        simulator.enable_block_supports(CosseratRod, configure_rod_block())
+        simulator.enable_block_supports(
+            CosseratRod, configure_rod_block(inner_block_cls=block_cls)
+        )
         simulator.enable_block_supports(Sphere, MemoryBlockRigidBodyJax)
 
         rod = _build_rod()
@@ -90,9 +104,7 @@ def test_jax_rod_rigid_body_finalize_wraps_pair_views_into_stage_operator():
         )
 
         expected_rigid_body = np.asarray(initial_states[1]["external_forces"]).copy()
-        expected_rigid_body -= (
-            2.5 * np.asarray(initial_states[0]["mass"])[None, :1].sum()
-        )
+        expected_rigid_body -= 2.5 * rod.mass[:1].sum()
         np.testing.assert_allclose(
             np.asarray(updated_rigid_body_state["external_forces"]),
             expected_rigid_body,

@@ -1063,6 +1063,31 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
             ),
         )
 
+    def rod_view(
+        self,
+        state: JAXBlockState,
+        rod_idx: int,
+        *,
+        updates: JAXBlockState | None = None,
+    ) -> JAXRodView:
+        """Project one rod from explicit Block state.
+
+        Parameters
+        ----------
+        state
+            Authoritative Block state.
+        rod_idx
+            Index in block rod order.
+        updates
+            Shared pending writes for coupled views in this Block.
+
+        Returns
+        -------
+        JAXRodView
+            Rod-local view whose commit returns full Block state.
+        """
+        return JAXRodView(state, self._rod_view_metadata(rod_idx), updates=updates)
+
     def iterate_rods(self) -> Iterator[JAXRodView]:
         """Yield a rod-local view of each rod's current device state.
 
@@ -1085,7 +1110,7 @@ class _CosseratRodMemoryBlock(RodBase, _RodSymplecticStepperMixin):
         """
         state = self._device_state
         for rod_idx in range(self.n_rods):
-            yield JAXRodView(state, self._rod_view_metadata(rod_idx))
+            yield self.rod_view(state, rod_idx)
 
     def rods(self) -> Sequence[RodType]:
         """Return host rods packed into this Block, in block order.

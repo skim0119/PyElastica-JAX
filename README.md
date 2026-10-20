@@ -39,8 +39,13 @@ In `PyElastica`, a system, like `CosseratRod`, is collected and stored in a bloc
 ```py
 import jax
 import jax.numpy as jnp
+import numpy as np
+from tqdm import tqdm
+
 import elastica as ea
 import elastica_jax as eaj
+
+jax.config.update("jax_enable_x64", True)
 
 simulator = eaj.Simulator()  # <-- create the system collection. Unified API for all operations.
 rod_block = eaj.configure_rod_block()
@@ -50,12 +55,23 @@ simulator.enable_block_supports(  # <-- assign the JAX block for CosseratRod
 )
 
 # Append rods
-n_rods = 10
-rods = []  # Serves as a rod view
-for _ in range(n_rods):
-    rod = ea.CosseratRod.straight_rod(...)
+n_rods = 2
+rods = []
+for rod_idx in range(n_rods):
+    rod = ea.CosseratRod.straight_rod(
+        n_elements=8,
+        start=np.array([0.0, 0.05 * rod_idx, 0.0]),
+        direction=np.array([1.0, 0.0, 0.0]),
+        normal=np.array([0.0, 1.0, 0.0]),
+        base_length=0.2,
+        base_radius=0.005,
+        density=1000.0,
+        youngs_modulus=1.0e5,
+    )
     rods.append(rod)
     simulator.append(rod)
+    simulator.operate(rod).using(eaj.OneEndFixedJax)
+    simulator.operate(rod).using(eaj.GravityForcesJax)
 simulator.finalize()
 ```
 
@@ -65,14 +81,16 @@ Unlike `PyElastica`, stepper does not provide single `step` method, instead it p
 ```py
 timestepper = eaj.PositionVerletJAX()
 time = 0.0
-final_time = 10.0
-dt = 0.001
+final_time = 0.01
+dt = 0.0001
 time = timestepper.integrate(
     simulator,
     time=time,
     final_time=final_time,
     dt=dt,
 )
+rod_block.from_device()
+print(rods[0].position_collection[:, -1])  # Current tip position
 ```
 
 ### How to collect data?
@@ -82,20 +100,27 @@ In `PyElastica`, data is collected by attaching `ea.Callback` to the system. In 
 > **_NOTE:_** This is key differnce between original PyElastica and PyElastica-JAX. The block rod (handled within the simulator during) is not always synchronized with the reference rods (created by user). This is to support multi-device and heterogeneous (GPU, CPU+GPU, etc.) execution more smoothly within JAX syntax pattern.
 > In detail, callback in PyElastica interrupt the integrate loop and collect data for I/O. Most of the time, due to large number of simulation steps, branch like `step % step_skip == 0` is used to collect data intermittently. This could be achieved using `jax.pure_callback` (probably) but it defeats the point of using JIT. Hence, collection is taken cared outside, closer to user's control.
 
-Here is the recommended way to collect data. The integration could be broken into chunks, at desirable frame rate. Use `eaj.save` to write HDF5 frames. **Save/Load never call `from_device` / `to_device`**: a block Save reads device state; a rod Save reads host arrays as-is. Sync only when you intentionally want host rods updated.
+Here is the recommended way to collect data. The integration can be broken into chunks of an integer number of steps. Choose `steps_per_frame` to set the sampling interval; the final chunk may be shorter. Use `eaj.save` to write HDF5 frames. **Save/Load never call `from_device` / `to_device`**: a block Save reads device state; a rod Save reads host arrays as-is. Sync only when you intentionally want host rods updated.
 
 ```py
-current_time = 0.0
-final_time = 10.0
-dt = 0.001
-fps = 25.0
-frame_dt = 1.0 / fps
-n_frames = int(round(final_time / frame_dt)) + 1
-for frame_idx in tqdm(range(n_frames)):
-    jax.block_until_ready(rod_block)
-
-    # Save block device state (includes ghosts). Schema level 0 keeps
-    # position_collection, director_collection, and radius.
+# Continue the simulation built above, starting at its returned time.
+current_time = time
+final_time = current_time + 0.01
+dt = 0.0001
+steps_per_frame = 25
+n_steps = int(round((final_time - current_time) / dt))
+assert np.isclose(current_time + n_steps * dt, final_time), (
+    "The sampling duration must be an integer multiple of dt."
+)
+frame_steps = range(0, n_steps + steps_per_frame, steps_per_frame)
+for frame_idx, step in enumerate(tqdm(frame_steps, desc="Saving simulation")):
+    target_time = time + min(step, n_steps) * dt
+    current_time = timestepper.integrate(
+        simulator,
+        time=current_time,
+        final_time=target_time,
+        dt=dt,
+    )
     eaj.save(
         rod_block,
         f"results/frame_{frame_idx:06d}.h5",
@@ -104,19 +129,9 @@ for frame_idx in tqdm(range(n_frames)):
         verbose=0,
     )
 
-    # Optional: sync into user-held rods for host-side inspection.
-    # rod_block.from_device()
-    # eaj.save(rods[0], f"results/rod0_{frame_idx:06d}.h5", verbose=0)
-
-    # Integrate
-    chunk_final_time = current_time + frame_dt
-    stepper.integrate(
-        simulator,
-        time=current_time,
-        final_time=chunk_final_time,
-        dt=dt,
-    )
-    current_time = chunk_final_time
+# Sync only when inspecting user-held host rods.
+rod_block.from_device()
+print(rods[0].position_collection[:, -1])
 ```
 
 Schema levels (`verbose`): `0` geometry/pose, `1` adds rates and strains, `10` full state (block/simulator files at level 10 are Load-safe for resume). For large block/simulator Saves, pass `n_workers>1` for chunked parallel writes. With an MPI `comm`, ranks barrier around Save/Load and only rank 0 writes a shared path.
@@ -268,46 +283,33 @@ expecting a secret gather/`vmap`.
 
 > **Reusing single-rod operators on blocks:** Classes derived from ``eaj.NoOpsJax`` (the same ``jax_operate_*`` API used with ``operate(rod)``) can also be registered with ``operate_block(rod_block).using(...)``. This is intentional: one operator instance is created per rod in the block (so ``__init__`` can read that rod's ``_system``), and the existing rod-local kernels are batched through ``Block.map_rods`` like ``jax_per_rod_operate_*``. For example, ``eaj.OneEndFixedJax`` works with both ``operate(rod)`` and ``operate_block(rod_block)`` without duplicating the implementation under ``jax_per_rod_operate_*``.
 
-Block-wide gravity on all rods and one-end-fixed on each rods:
+Apply block-wide gravity and fix one end of each rod:
 
 ```py
-type Vector = jax.Array
-type Director = jax.Array
-
-# class GravityBlockOp:
 class GravityBlockOp(eaj.NoBlockOpJax):
-    def __init__(self, acc_gravity: Vector, tip_position: Vector, tip_director: Director) -> None:
+    """Add gravity to a horizontal or stacked Block's nodal forces."""
+
+    def __init__(self, *, acc_gravity: jax.Array, **kwargs: object) -> None:
         self.acc_gravity = acc_gravity
 
-    def jax_per_rod_operate_constrain_values(self, rod_view, time):
-        rod_view.position_collection = rod_view.position_collection.at[:, 0].set(
-            self.fixed_position_collection
+    def jax_block_operate_synchronize(
+        self, block_state: dict[str, jax.Array], time: eaj.JAXTime
+    ) -> dict[str, jax.Array]:
+        """Return Block state with gravitational nodal forces added."""
+        updated = dict(block_state)
+        updated["external_forces"] = (
+            block_state["external_forces"]
+            + self.acc_gravity[:, None] * block_state["mass"][..., None, :]
         )
-        rod_view.director_collection = rod_view.director_collection.at[:, :, 0].set(
-            self.fixed_directors_collection
-        )
-        return rod_view
-
-    def jax_per_rod_operate_constrain_rates(self, rod_view, time):
-        rod_view.velocity_collection = rod_view.velocity_collection.at[:, 0].set(
-            jnp.zeros(3, dtype=rod_view.velocity_collection.dtype)
-        )
-        rod_view.omega_collection = rod_view.omega_collection.at[:, 0].set(
-            jnp.zeros(3, dtype=rod_view.omega_collection.dtype)
-        )
-        return rod_view
-
-    def jax_block_operate_synchronize(self, block_state, time):
-        block_state.external_forces = block_state.external_forces + self.acc_gravity[:, None] * block_state.mass[None, :]
         return updated
 
 
+# Register these before simulator.finalize(), in place of per-rod operators.
 simulator.operate_block(rod_block).using(
     GravityBlockOp,
-    acc_gravity=jnp.array([0.0, 0.0, -9.80665]),
-    tip_position=jnp.array([0.0, 0.0, 0.0]),
-    tip_director=jnp.eye(3),
+    acc_gravity=jnp.array([0.0, -9.80665, 0.0]),
 )
+simulator.operate_block(rod_block).using(eaj.OneEndFixedJax)
 ```
 
 ### Rod-Rod Interaction
@@ -334,8 +336,8 @@ simulator.pairwise_interaction(rod_one, rod_two).using(
 )
 ```
 
-Rods may live in the same memory block or in separate blocks on the **same
-device**. On a single device, ``PositionVerletJAX`` compiles one coupled
+Rods may live in horizontal or stacked blocks, in the same block or in
+separate blocks on the **same device**. On a single device, ``PositionVerletJAX`` compiles one coupled
 ``fori_loop`` over all block states and applies rod-to-rod operators during the
 global synchronize stage.
 
