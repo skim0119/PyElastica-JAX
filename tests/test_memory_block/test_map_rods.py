@@ -16,8 +16,7 @@ from elastica_jax.memory_block.memory_block_rod_jax import (  # noqa: E402
 from elastica_jax.memory_block.memory_block_rod_vertical_jax import (  # noqa: E402
     _CosseratRodVerticalMemoryBlock,
 )
-from elastica_jax.memory_block.protocol import RodLocalOp  # noqa: E402
-from elastica_jax.memory_block.rod_local_map import RodLocalState  # noqa: E402
+from elastica_jax.memory_block.protocol import RodLocalOp, RodView  # noqa: E402
 
 
 def _build_rod(n_elems: int = 4, *, seed: int = 0) -> CosseratRod:
@@ -35,16 +34,16 @@ def _build_rod(n_elems: int = 4, *, seed: int = 0) -> CosseratRod:
 
 
 def _scale_external_forces(
-    rod_view: RodLocalState,
-    time: np.float64,
-) -> RodLocalState:
+    rod_view: RodView,
+    time: np.float64 | float,
+) -> RodView:
     del time
     rod_view.external_forces = rod_view.external_forces * np.float64(2.0)
     return rod_view
 
 
 def _scale_external_forces_by(scale: float) -> RodLocalOp:
-    def _op(rod_view: RodLocalState, time: np.float64) -> RodLocalState:
+    def _op(rod_view: RodView, time: np.float64 | float) -> RodView:
         del time
         rod_view.external_forces = rod_view.external_forces * np.float64(scale)
         return rod_view
@@ -55,9 +54,15 @@ def _scale_external_forces_by(scale: float) -> RodLocalOp:
 def test_horizontal_map_rods_scales_each_rod_external_forces() -> None:
     rods = [_build_rod(4, seed=0), _build_rod(4, seed=1)]
     with jax.default_device(CPU_DEVICE):
-        block = _CosseratRodMemoryBlock(device=CPU_DEVICE, device_dtype=np.float64)
+        block = _CosseratRodMemoryBlock(
+            device=CPU_DEVICE, device_dtype=np.dtype(np.float64)
+        )
         block(rods, [0, 1])
         state = block.jax_get_state()
+        forces = state["external_forces"]
+        state["external_forces"] = jax.numpy.arange(
+            1, forces.size + 1, dtype=forces.dtype
+        ).reshape(forces.shape)
         updated = block.map_rods(state, _scale_external_forces, np.float64(0.0))
 
     for rod_idx in range(2):
@@ -68,14 +73,21 @@ def test_horizontal_map_rods_scales_each_rod_external_forces() -> None:
             2.0 * np.asarray(state["external_forces"])[:, start:end],
         )
 
+    np.testing.assert_array_equal(
+        np.asarray(updated["external_forces"])[:, block.ghost_nodes_idx],
+        np.asarray(state["external_forces"])[:, block.ghost_nodes_idx],
+    )
+
 
 def test_block_rods_returns_packed_host_rods_in_order() -> None:
     rods = [_build_rod(4, seed=0), _build_rod(4, seed=1)]
     with jax.default_device(CPU_DEVICE):
-        horizontal = _CosseratRodMemoryBlock(device=CPU_DEVICE, device_dtype=np.float64)
+        horizontal = _CosseratRodMemoryBlock(
+            device=CPU_DEVICE, device_dtype=np.dtype(np.float64)
+        )
         horizontal(rods, [0, 1])
         vertical = _CosseratRodVerticalMemoryBlock(
-            device=CPU_DEVICE, device_dtype=np.float64
+            device=CPU_DEVICE, device_dtype=np.dtype(np.float64)
         )
         vertical(rods, [0, 1])
 
@@ -86,9 +98,15 @@ def test_block_rods_returns_packed_host_rods_in_order() -> None:
 def test_horizontal_map_rods_applies_heterogeneous_ops_per_rod() -> None:
     rods = [_build_rod(4, seed=0), _build_rod(4, seed=1)]
     with jax.default_device(CPU_DEVICE):
-        block = _CosseratRodMemoryBlock(device=CPU_DEVICE, device_dtype=np.float64)
+        block = _CosseratRodMemoryBlock(
+            device=CPU_DEVICE, device_dtype=np.dtype(np.float64)
+        )
         block(rods, [0, 1])
         state = block.jax_get_state()
+        forces = state["external_forces"]
+        state["external_forces"] = jax.numpy.arange(
+            1, forces.size + 1, dtype=forces.dtype
+        ).reshape(forces.shape)
         updated = block.map_rods(
             state,
             (_scale_external_forces_by(2.0), _scale_external_forces_by(3.0)),
@@ -108,15 +126,24 @@ def test_horizontal_map_rods_applies_heterogeneous_ops_per_rod() -> None:
         3.0 * np.asarray(state["external_forces"])[:, start1:end1],
     )
 
+    np.testing.assert_array_equal(
+        np.asarray(updated["external_forces"])[:, block.ghost_nodes_idx],
+        np.asarray(state["external_forces"])[:, block.ghost_nodes_idx],
+    )
+
 
 def test_vertical_map_rods_scales_each_rod_external_forces() -> None:
     rods = [_build_rod(4, seed=0), _build_rod(4, seed=1)]
     with jax.default_device(CPU_DEVICE):
         block = _CosseratRodVerticalMemoryBlock(
-            device=CPU_DEVICE, device_dtype=np.float64
+            device=CPU_DEVICE, device_dtype=np.dtype(np.float64)
         )
         block(rods, [0, 1])
         state = block.jax_get_state()
+        forces = state["external_forces"]
+        state["external_forces"] = jax.numpy.arange(
+            1, forces.size + 1, dtype=forces.dtype
+        ).reshape(forces.shape)
         updated = block.map_rods(state, _scale_external_forces, np.float64(0.0))
 
     np.testing.assert_allclose(
