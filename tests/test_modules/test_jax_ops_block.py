@@ -8,6 +8,7 @@ from elastica.rod.cosserat_rod import CosseratRod  # noqa: E402
 from elastica_jax import (  # noqa: E402
     NoBlockOpJax,
     OneEndFixedJax,
+    RodSystemLike,
     Simulator,
     configure_rod_block,
 )
@@ -150,3 +151,36 @@ def test_unequal_rods_support_unbatched_operations(
 
     expected_scale = 1.0 if per_rod_registration else 2.0
     np.testing.assert_allclose(result["external_forces"], expected_scale * forces)
+
+
+def test_reused_operator_is_constructed_once_per_rod() -> None:
+    """Inspect existing instances without constructing the first rod twice."""
+    constructed: list[RodSystemLike] = []
+
+    class CountingBoundary(OneEndFixedJax):
+        """Record constructor calls while keeping the fixed-end physics."""
+
+        def __init__(self, *, _system: RodSystemLike) -> None:
+            """Capture the target rod and its initial boundary."""
+            constructed.append(_system)
+            super().__init__(_system=_system)
+
+    simulator = Simulator()
+    block = configure_rod_block()
+    simulator.enable_block_supports(CosseratRod, block)
+    rods = [_build_rod(), _build_rod()]
+    for index, rod in enumerate(rods):
+        rod.position_collection[0] += float(index)
+        simulator.append(rod)
+    simulator.operate_block(block).using(CountingBoundary)
+    simulator.finalize()
+
+    assert len(constructed) == len(rods), "Construct exactly one operator per rod."
+    assert all(target is rod for target, rod in zip(constructed, rods))
+    state = block.jax_get_state()
+    state["position_collection"] += 2.0
+    result = jax.jit(simulator.jax_constrain_values)((state,), 0.0)[0]
+    for index, start in enumerate(block.start_idx_in_rod_nodes):
+        np.testing.assert_allclose(
+            result["position_collection"][:, start], np.array([float(index), 0.0, 0.0])
+        )
