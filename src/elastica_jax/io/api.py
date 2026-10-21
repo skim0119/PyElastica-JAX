@@ -10,7 +10,8 @@ import numpy as np
 
 from elastica_jax.io.block_state import _RodBlockState, write_block_into
 from elastica_jax.io.parallel import write_group_arrays_parallel
-from elastica_jax.io.resolve import hdf5_io_for
+from elastica_jax.io.hdf5_io_mixin import Hdf5IO
+from elastica_jax.io.resolve import _require_standard_block_io, hdf5_io_for
 from elastica_jax.io.schema import (
     BLOCKS_GROUP,
     IO_VERSION,
@@ -86,6 +87,7 @@ def _simulator_rod_blocks(simulator: object) -> list[_RodBlockState]:
         if callable(getattr(system, "write_hdf5_state", None)) and callable(
             getattr(system, "read_hdf5_state", None)
         ):
+            _require_standard_block_io(system)
             blocks.append(system)  # type: ignore[arg-type]
     assert blocks, "Simulator has no HDF5-capable rod blocks to save or load."
     return blocks
@@ -102,11 +104,19 @@ def _save_block_or_simulator_parallel(
     n_workers: int,
 ) -> None:
     if target_kind == TARGET_BLOCK:
+        _require_standard_block_io(target)
         blocks: list[_RodBlockState] = [target]  # type: ignore[list-item]
     else:
         assert target_kind == TARGET_SIMULATOR, (
             f"Parallel Save supports block/simulator; got {target_kind!r}."
         )
+        for method_name in ("write_hdf5_state", "read_hdf5_state"):
+            method = getattr(target, method_name)
+            if getattr(method, "__func__", None) is not getattr(Hdf5IO, method_name):
+                raise NotImplementedError(
+                    "Parallel Save cannot honor custom Simulator serializers. "
+                    "Use n_workers=1 for this Simulator."
+                )
         blocks = _simulator_rod_blocks(target)
 
     pending: list[tuple[str, dict[str, np.ndarray]]] = []
@@ -180,6 +190,9 @@ def save(
     AssertionError
         If ``verbose`` is unsupported, ``n_workers < 1``, or ``target`` cannot
         be adapted.
+    NotImplementedError
+        If composite or parallel Save would bypass a custom serializer.
+        Save custom Blocks individually with ``n_workers=1``.
     """
     assert n_workers >= 1, f"n_workers must be >= 1; got {n_workers}."
     schema_level = int(verbose)
