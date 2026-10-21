@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import h5py
 import numpy as np
@@ -40,7 +41,7 @@ def _finalize_simulator() -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
     simulator = eaj.Simulator()
     rod_block = eaj.configure_rod_block(
         device=jax.devices("cpu")[0],
-        device_dtype=np.float64,
+        device_dtype=np.dtype(np.float64),
     )
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
     for rod in _layout_rods(n_rods=2, n_elements=3):
@@ -71,3 +72,28 @@ def test_save_load_simulator_roundtrip(tmp_path: Path) -> None:
     with h5py.File(path, "r") as handle:
         assert handle.attrs["target_kind"] == "simulator"
         assert "0" in handle["blocks"]
+
+
+@pytest.mark.parametrize("n_workers", [1, 2])
+@pytest.mark.parametrize("schema_level", [0, 10])
+def test_mixed_simulator_save_rejects_incomplete_state_before_open(
+    tmp_path: Path, n_workers: int, schema_level: int
+) -> None:
+    """An unsupported rigid Block must not produce a partial checkpoint."""
+    simulator = eaj.Simulator()
+    simulator.enable_block_supports(ea.CosseratRod, eaj.configure_rod_block())
+    simulator.enable_block_supports(ea.Sphere, eaj.MemoryBlockRigidBodyJax)
+    simulator.append(_layout_rods(n_rods=1, n_elements=3)[0])
+    simulator.append(ea.Sphere(np.zeros(3), 0.01, 1000.0))
+    simulator.finalize()
+
+    with patch("elastica_jax.io.api.h5py.File") as open_file:
+        with pytest.raises(AssertionError, match="MemoryBlockRigidBodyJax"):
+            eaj.save(
+                simulator,
+                tmp_path / "existing.h5",
+                verbose=schema_level,
+                n_workers=n_workers,
+            )
+
+    open_file.assert_not_called()

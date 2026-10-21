@@ -186,6 +186,9 @@ def save(
     fields_for_schema_level(schema_level)  # validate early
     io = hdf5_io_for(target)
     out_path = Path(path)
+    blocks = getattr(io, "_hdf5_rod_blocks", None)
+    if callable(blocks):
+        blocks()  # Validate completeness before opening or replacing a file.
 
     _mpi_barrier(comm)
     if not _mpi_is_root(comm):
