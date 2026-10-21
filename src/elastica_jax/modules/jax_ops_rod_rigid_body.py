@@ -138,18 +138,6 @@ class JAXOpsRodRigidBody(JAXBasicMixins, SystemCollectionProtocol):
         self._jax_rod_rigid_body_ops_list = []
         del self._jax_rod_rigid_body_ops_list
 
-    def _stage_group(self, stage: str) -> Any:
-        assert stage in (
-            "constrain_values",
-            "synchronize",
-            "constrain_rates",
-        ), f"Unsupported mixed JAX operator stage {stage!r}."
-        if stage == "constrain_values":
-            return self._feature_group_constrain_values
-        if stage == "synchronize":
-            return self._feature_group_synchronize
-        return self._feature_group_constrain_rates
-
     def _make_jax_rigid_body_view_metadata(
         self,
         final_systems: tuple[object, ...],

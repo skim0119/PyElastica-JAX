@@ -258,18 +258,6 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
         self._jax_block_ops_list = []
         del self._jax_block_ops_list
 
-    def _stage_group(self, stage: str):  # type: ignore[no-untyped-def]
-        assert stage in (
-            "constrain_values",
-            "synchronize",
-            "constrain_rates",
-        ), f"Unsupported JAX block operator stage {stage!r}."
-        if stage == "constrain_values":
-            return self._feature_group_constrain_values
-        if stage == "synchronize":
-            return self._feature_group_synchronize
-        return self._feature_group_constrain_rates
-
     @staticmethod
     def _find_target_block(
         final_systems: tuple[Any, ...],
