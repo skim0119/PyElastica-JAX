@@ -9,6 +9,7 @@ from elastica_jax.io.block_state import (
     read_block_from,
     write_block_into,
 )
+from elastica_jax.io.resolve import _require_standard_block_io
 from elastica_jax.io.schema import BLOCKS_GROUP, TARGET_SIMULATOR
 
 
@@ -33,6 +34,7 @@ class Hdf5IO:
                 f"system; {type(system).__name__} does not support HDF5. "
                 "Save supported blocks individually until all systems support I/O."
             )
+            _require_standard_block_io(system)
             blocks.append(system)  # type: ignore[arg-type]
         assert blocks, "Simulator has no HDF5-capable rod blocks to save or load."
         return blocks

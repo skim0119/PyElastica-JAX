@@ -472,6 +472,12 @@ rod_block = eaj.configure_rod_block(inner_block_cls=AxialViscousBlock)
 simulator.enable_block_supports(ea.CosseratRod, rod_block)
 ```
 
+Custom HDF5 serializers are supported for standalone Blocks through serial
+`save(block, ..., n_workers=1)` and `load(block, ...)`. Simulator Save/Load and
+parallel Save currently use the standard Block schema and reject overridden
+serializers before writing their payload. Save custom Blocks individually until
+composite and parallel I/O support their serialization contract.
+
 The `_`-prefixed class and kernel are implementation interfaces and may change.
 This example intentionally exposes that dependency. For a larger extension,
 see the [muscle rod](examples/MuscleRod/muscle_rod.py) and its
