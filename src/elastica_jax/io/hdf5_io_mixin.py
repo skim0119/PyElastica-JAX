@@ -26,10 +26,14 @@ class Hdf5IO:
     def _hdf5_rod_blocks(self) -> list[_RodBlockState]:
         blocks: list[_RodBlockState] = []
         for system in self.final_systems():  # type: ignore[attr-defined]
-            if callable(getattr(system, "write_hdf5_state", None)) and callable(
+            assert callable(getattr(system, "write_hdf5_state", None)) and callable(
                 getattr(system, "read_hdf5_state", None)
-            ):
-                blocks.append(system)  # type: ignore[arg-type]
+            ), (
+                f"Simulator Save/Load requires HDF5 support for every finalized "
+                f"system; {type(system).__name__} does not support HDF5. "
+                "Save supported blocks individually until all systems support I/O."
+            )
+            blocks.append(system)  # type: ignore[arg-type]
         assert blocks, "Simulator has no HDF5-capable rod blocks to save or load."
         return blocks
 
