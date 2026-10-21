@@ -187,15 +187,15 @@ class JAXOpsBlock(JAXBasicMixins, SystemCollectionProtocol):
                 "block operator methods. Use one constructor contract."
             )
 
-            instantiate_target: Any = block_system
             per_rod_operators: tuple[Any, ...] | None = None
             if instantiate_per_rod_single_ops:
                 packed_rods = block_system.rods()
                 per_rod_operators = tuple(
                     jax_op.instantiate(rod) for rod in packed_rods
                 )
-                instantiate_target = packed_rods[0]
-            op_instance = jax_op.instantiate(instantiate_target)
+                op_instance = per_rod_operators[0]
+            else:
+                op_instance = jax_op.instantiate(block_system)
 
             for (
                 stage,
