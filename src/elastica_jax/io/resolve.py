@@ -18,3 +18,25 @@ def hdf5_io_for(target: object) -> Hdf5StateIO:
     if callable(write) and callable(read):
         return target  # type: ignore[return-value]
     return RodHdf5Adapter(target)
+
+
+def _require_standard_block_io(block: object) -> None:
+    """Reject custom serializers where orchestration writes the standard schema."""
+    from elastica_jax.memory_block.memory_block_rod_jax import _CosseratRodMemoryBlock
+    from elastica_jax.memory_block.memory_block_rod_vertical_jax import (
+        _CosseratRodVerticalMemoryBlock,
+    )
+
+    standard_types = (_CosseratRodMemoryBlock, _CosseratRodVerticalMemoryBlock)
+    for method_name in ("write_hdf5_state", "read_hdf5_state"):
+        method = getattr(block, method_name, None)
+        implementation = getattr(method, "__func__", None)
+        if not any(
+            implementation is getattr(block_type, method_name)
+            for block_type in standard_types
+        ):
+            raise NotImplementedError(
+                "Simulator and parallel Save/Load require the standard Block "
+                "HDF5 serializers. Save this custom Block directly with "
+                "n_workers=1; load it directly to honor its serializer."
+            )
