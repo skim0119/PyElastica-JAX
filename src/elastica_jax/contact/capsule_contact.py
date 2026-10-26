@@ -152,6 +152,7 @@ def _apply_capsule_contact_unified(
         friction_coefficient=op.friction_coefficient,
         static_velocity_threshold=op.static_velocity_threshold,
         friction_gate=friction_gate,
+        rod_ids=kinematics["rod_ids"],
     )
     updated = dict(state)
     updated["external_forces"] = external_forces
@@ -165,13 +166,16 @@ def _apply_capsule_contact_unified(
 
 
 class CapsuleContactOp(NoBlockOpJax):
-    """Capsule-capsule contact for packed Cosserat rod blocks.
+    """Capsule-capsule contact for packed or stacked Cosserat rod blocks.
 
     Broad-phase candidates are collected by either a spatial hash
     (``broad_phase="spatial_hash"``, default) or by all-pairs AABB testing
     (``broad_phase="all_pairs"``), which mirrors PyElastica's non-hashed
     rod-rod contact registration style. Both paths run as pure JAX on the
     block device.
+
+    On a multi-device vertical block, kinematics are gathered across the rod
+    mesh so contact pairs that span device shards remain physically coupled.
 
     By default the contact is the linear normal-spring/damper law. Optional
     arguments enable a Hertzian ``gamma^1.5`` normal law (``hertzian=True``), a
@@ -271,6 +275,7 @@ def _apply_wall_contact_unified(
         external_torques=state["external_torques"],
         contact_stiffness=op.contact_stiffness,
         contact_damping=op.contact_damping,
+        rod_ids=kinematics["rod_ids"],
     )
     updated = dict(state)
     updated["external_forces"] = external_forces
@@ -279,7 +284,7 @@ def _apply_wall_contact_unified(
 
 
 class WallContactOp(NoBlockOpJax):
-    """Half-space wall contact for packed capsule elements."""
+    """Half-space wall contact for packed or stacked capsule elements."""
 
     communication_scope = CommunicationScope.LOCAL
 
