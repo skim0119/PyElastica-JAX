@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -21,10 +21,12 @@ if str(REPO_ROOT) not in sys.path:
 
 import elastica as ea  # noqa: E402
 import elastica_jax as eaj  # noqa: E402
+from elastica_jax.memory_block.rod_local_map import RodLocalState  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 
-BenchmarkTiming: TypeAlias = tuple[float, float]
+type BenchmarkTiming = tuple[float, float]
+type JAXRodBlock = eaj._CosseratRodMemoryBlock | eaj._CosseratRodVerticalMemoryBlock
 
 ROD_LENGTH = 0.35
 ROD_RADIUS = 0.011 * ROD_LENGTH
@@ -69,6 +71,9 @@ class ContactScalingPyElasticaSimulator(
 class CenterAttractForcesJax(eaj.NoBlockOpJax):
     """Apply a horizontal-plane spring that pulls nodes toward a fixed center.
 
+    Authored as a per-rod operator so packed horizontal and stacked vertical
+    blocks both receive rod-local ``(3, n_nodes)`` views via ``map_rods``.
+
     Parameters
     ----------
     attract_strength : float
@@ -82,22 +87,26 @@ class CenterAttractForcesJax(eaj.NoBlockOpJax):
         *,
         attract_strength: float,
         center: np.ndarray,
-        _system=None,
+        **kwargs: object,
     ) -> None:
-        assert _system is not None, "CenterAttractForcesJax requires a finalized block."
         self.attract_strength = attract_strength
-        self.center = center
+        self.center = np.asarray(center, dtype=np.float64)
 
-    def jax_block_operate_synchronize(self, state, time):
-        positions = state["position_collection"]
-        delta = self.center[:, None] - positions
+    def jax_per_rod_operate_synchronize(
+        self,
+        rod_view: RodLocalState,
+        time: np.float64,
+    ) -> RodLocalState:
+        positions = rod_view.position_collection
+        center = jnp.asarray(self.center, dtype=positions.dtype)
+        delta = center[:, None] - positions
         plane_mask = jnp.array([1.0, 1.0, 0.0], dtype=positions.dtype)[:, None]
         delta = delta * plane_mask
-        attract_forces = self.attract_strength * delta * state["mass"][None, :]
-        return {
-            **state,
-            "external_forces": state["external_forces"] + attract_forces,
-        }
+        rod_view.external_forces = (
+            rod_view.external_forces
+            + self.attract_strength * delta * rod_view.mass[None, :]
+        )
+        return rod_view
 
 
 class CenterAttractForcesPy(ea.NoForces):
@@ -122,41 +131,38 @@ def _orthonormal_normal(direction: np.ndarray) -> np.ndarray:
     return normal / np.linalg.norm(normal)
 
 
-def build_simulation(
+def make_ring_rod(config: ContactScalingConfig, *, rod_idx: int) -> ea.CosseratRod:
+    """Return one Cosserat rod on the contact-scaling ring at ``rod_idx``."""
+    assert 0 <= rod_idx < config.n_rods, "rod_idx must lie in [0, n_rods)."
+    theta = 2.0 * np.pi * rod_idx / config.n_rods
+    start = np.array(
+        [
+            config.ring_radius * np.cos(theta),
+            config.ring_radius * np.sin(theta),
+            0.5 * config.rod_length,
+        ],
+        dtype=np.float64,
+    )
+    direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    return ea.CosseratRod.straight_rod(
+        config.n_elements,
+        start,
+        direction,
+        _orthonormal_normal(direction),
+        config.rod_length,
+        config.rod_radius,
+        DENSITY,
+        youngs_modulus=YOUNGS_MODULUS,
+    )
+
+
+def _configure_jax_block_operators(
+    simulator: eaj.Simulator,
+    rod_block: JAXRodBlock,
     config: ContactScalingConfig,
     *,
-    device: jax.Device,
-    broad_phase: str = "spatial_hash",
-) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock]:
-    """Build a packed rod block with center attraction and rod-rod contact only."""
-    simulator = eaj.Simulator()
-    rod_block = eaj.configure_rod_block(device=device)
-    simulator.enable_block_supports(ea.CosseratRod, rod_block)
-
-    ring_radius = config.ring_radius
-    for rod_idx in range(config.n_rods):
-        theta = 2.0 * np.pi * rod_idx / config.n_rods
-        start = np.array(
-            [
-                ring_radius * np.cos(theta),
-                ring_radius * np.sin(theta),
-                0.5 * config.rod_length,
-            ],
-            dtype=np.float64,
-        )
-        direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        rod = ea.CosseratRod.straight_rod(
-            config.n_elements,
-            start,
-            direction,
-            _orthonormal_normal(direction),
-            config.rod_length,
-            config.rod_radius,
-            DENSITY,
-            youngs_modulus=YOUNGS_MODULUS,
-        )
-        simulator.append(rod)
-
+    broad_phase: str,
+) -> None:
     simulator.operate_block(rod_block).using(
         CenterAttractForcesJax,
         attract_strength=ATTRACT_STRENGTH,
@@ -176,8 +182,16 @@ def build_simulation(
         damping_constant=DAMPING_RATE,
         time_step=config.time_step,
     )
-    simulator.finalize()
 
+
+def _install_capsule_contact(
+    rod_block: JAXRodBlock,
+    config: ContactScalingConfig,
+    *,
+    broad_phase: str,
+    device: jax.Device | None = None,
+) -> None:
+    """Install capsule contact state after finalize for packed or stacked blocks."""
     metadata = eaj.build_block_capsule_metadata(
         rod_block,
         n_elements_per_rod=config.n_elements,
@@ -189,66 +203,52 @@ def build_simulation(
         device=device,
         dtype=rod_block.device_dtype,
     )
-    return simulator, rod_block
 
 
-def build_simulation_pairwise(
+def build_simulation(
     config: ContactScalingConfig,
     *,
-    device: jax.Device,
-) -> tuple[eaj.Simulator, eaj._CosseratRodMemoryBlock, list[ea.CosseratRod]]:
-    """Build packed rods with PyElastica-style per-pair rod-rod contact."""
+    device: jax.Device | Sequence[jax.Device],
+    broad_phase: str = "spatial_hash",
+    vertical: bool = False,
+) -> tuple[eaj.Simulator, JAXRodBlock]:
+    """Build a rod block with center attraction and rod-rod contact only.
+
+    Pass a device sequence with ``vertical=True`` to shard one stacked block
+    across multiple devices (single-node multi-GPU vertical path).
+    """
+    if isinstance(device, Sequence) and not isinstance(device, (str, bytes)):
+        devices = tuple(device)
+        assert devices, "device sequence must be non-empty."
+        assert vertical, "Multi-device rod-contact requires vertical=True."
+        assert config.n_rods % len(devices) == 0, (
+            "n_rods must be divisible by the number of devices for vertical sharding."
+        )
+        block_device: jax.Device | Sequence[jax.Device] = devices
+        primary = devices[0]
+    else:
+        block_device = device
+        primary = device
+
     simulator = eaj.Simulator()
-    rod_block = eaj.configure_rod_block(device=device)
+    inner_block_cls = (
+        eaj._CosseratRodVerticalMemoryBlock if vertical else eaj._CosseratRodMemoryBlock
+    )
+    rod_block = eaj.configure_rod_block(
+        device=block_device,
+        inner_block_cls=inner_block_cls,
+    )
     simulator.enable_block_supports(ea.CosseratRod, rod_block)
-    rods: list[ea.CosseratRod] = []
 
-    ring_radius = config.ring_radius
     for rod_idx in range(config.n_rods):
-        theta = 2.0 * np.pi * rod_idx / config.n_rods
-        start = np.array(
-            [
-                ring_radius * np.cos(theta),
-                ring_radius * np.sin(theta),
-                0.5 * config.rod_length,
-            ],
-            dtype=np.float64,
-        )
-        direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        rod = ea.CosseratRod.straight_rod(
-            config.n_elements,
-            start,
-            direction,
-            _orthonormal_normal(direction),
-            config.rod_length,
-            config.rod_radius,
-            DENSITY,
-            youngs_modulus=YOUNGS_MODULUS,
-        )
-        simulator.append(rod)
-        rods.append(rod)
+        simulator.append(make_ring_rod(config, rod_idx=rod_idx))
 
-    simulator.operate_block(rod_block).using(
-        CenterAttractForcesJax,
-        attract_strength=ATTRACT_STRENGTH,
-        center=config.attract_center,
+    _configure_jax_block_operators(
+        simulator, rod_block, config, broad_phase=broad_phase
     )
-    simulator.operate_block(rod_block).using(
-        eaj.AnalyticalLinearDamperJax,
-        damping_constant=DAMPING_RATE,
-        time_step=config.time_step,
-    )
-
-    for left_idx in range(len(rods)):
-        for right_idx in range(left_idx + 1, len(rods)):
-            simulator.pairwise_interaction(rods[left_idx], rods[right_idx]).using(
-                eaj.RodRodContactJax,
-                k=CONTACT_STIFFNESS,
-                nu=CONTACT_DAMPING,
-            )
-
     simulator.finalize()
-    return simulator, rod_block, rods
+    _install_capsule_contact(rod_block, config, broad_phase=broad_phase, device=primary)
+    return simulator, rod_block
 
 
 def build_simulation_pyelastica(
@@ -258,28 +258,8 @@ def build_simulation_pyelastica(
     simulator = ContactScalingPyElasticaSimulator()
     rods: list[ea.CosseratRod] = []
 
-    ring_radius = config.ring_radius
     for rod_idx in range(config.n_rods):
-        theta = 2.0 * np.pi * rod_idx / config.n_rods
-        start = np.array(
-            [
-                ring_radius * np.cos(theta),
-                ring_radius * np.sin(theta),
-                0.5 * config.rod_length,
-            ],
-            dtype=np.float64,
-        )
-        direction = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        rod = ea.CosseratRod.straight_rod(
-            config.n_elements,
-            start,
-            direction,
-            _orthonormal_normal(direction),
-            config.rod_length,
-            config.rod_radius,
-            DENSITY,
-            youngs_modulus=YOUNGS_MODULUS,
-        )
+        rod = make_ring_rod(config, rod_idx=rod_idx)
         simulator.append(rod)
         simulator.add_forcing_to(rod).using(
             CenterAttractForcesPy,
@@ -305,10 +285,41 @@ def build_simulation_pyelastica(
     return simulator, rods
 
 
-def _block_until_ready(rod_block: eaj._CosseratRodMemoryBlock) -> None:
+def _block_until_ready(rod_block: JAXRodBlock) -> None:
     for leaf in jax.tree_util.tree_leaves(rod_block.jax_get_state()):
         if hasattr(leaf, "block_until_ready"):
             leaf.block_until_ready()
+
+
+def integrate_jax_block_rollout(
+    simulator: eaj.Simulator,
+    rod_block: JAXRodBlock,
+    *,
+    steps: int,
+    warmup_runs: int,
+    time_step: float,
+) -> float:
+    """Warm up and time a Position Verlet rollout on one JAX block."""
+    dt_value = np.float64(time_step)
+    stepper = eaj.PositionVerletJAX()
+    time_value = np.float64(0.0)
+    for _ in range(warmup_runs):
+        time_value = stepper.integrate(
+            simulator,
+            time=time_value,
+            final_time=time_value + steps * dt_value,
+            dt=dt_value,
+        )
+        _block_until_ready(rod_block)
+    rollout_start = time.perf_counter()
+    time_value = stepper.integrate(
+        simulator,
+        time=time_value,
+        final_time=time_value + steps * dt_value,
+        dt=dt_value,
+    )
+    _block_until_ready(rod_block)
+    return time.perf_counter() - rollout_start
 
 
 def run_rollout(
@@ -320,94 +331,49 @@ def run_rollout(
     n_elements: int = N_ELEMENTS,
     steps_between_detection: int = STEPS_BETWEEN_DETECTION,
     broad_phase: str = "spatial_hash",
+    vertical: bool = False,
+    n_devices: int = 1,
 ) -> BenchmarkTiming:
     """Build the simulator and time a fixed-length Position Verlet rollout."""
     assert steps > 0, "steps must be positive."
     assert warmup_runs >= 0, "warmup_runs must be nonnegative."
+    assert n_devices >= 1, "n_devices must be positive."
 
     config = ContactScalingConfig(
         n_rods=n_rods,
         n_elements=n_elements,
         steps_between_detection=steps_between_detection,
     )
-    device = eaj.resolve_backend_devices(backend)[0]
-    dt_value = np.float64(config.time_step)
+    if n_devices > 1:
+        assert vertical, "n_devices > 1 requires vertical=True."
+    devices = eaj.resolve_backend_devices(backend)
+    assert n_devices <= len(devices), (
+        f"Requested n_devices={n_devices} but backend {backend!r} has "
+        f"{len(devices)} device(s)."
+    )
+    if n_devices > 1:
+        device: jax.Device | Sequence[jax.Device] = devices[:n_devices]
+        primary = devices[0]
+    else:
+        device = devices[0]
+        primary = device
 
-    with jax.default_device(device):
+    with jax.default_device(primary):
         instantiate_start = time.perf_counter()
         simulator, rod_block = build_simulation(
-            config, device=device, broad_phase=broad_phase
+            config,
+            device=device,
+            broad_phase=broad_phase,
+            vertical=vertical,
         )
         instantiate_seconds = time.perf_counter() - instantiate_start
-
-        stepper = eaj.PositionVerletJAX()
-        time_value = np.float64(0.0)
-        for _ in range(warmup_runs):
-            time_value = stepper.integrate(
-                simulator,
-                time=time_value,
-                final_time=time_value + steps * dt_value,
-                dt=dt_value,
-            )
-            _block_until_ready(rod_block)
-
-        rollout_start = time.perf_counter()
-        time_value = stepper.integrate(
+        rollout_seconds = integrate_jax_block_rollout(
             simulator,
-            time=time_value,
-            final_time=time_value + steps * dt_value,
-            dt=dt_value,
+            rod_block,
+            steps=steps,
+            warmup_runs=warmup_runs,
+            time_step=config.time_step,
         )
-        _block_until_ready(rod_block)
-        rollout_seconds = time.perf_counter() - rollout_start
-
-    return instantiate_seconds, rollout_seconds
-
-
-def run_rollout_pairwise(
-    *,
-    backend: str,
-    n_rods: int,
-    steps: int,
-    warmup_runs: int,
-    n_elements: int = N_ELEMENTS,
-) -> BenchmarkTiming:
-    """Build the pairwise JAX simulator and time a fixed-length rollout."""
-    assert steps > 0, "steps must be positive."
-    assert warmup_runs >= 0, "warmup_runs must be nonnegative."
-
-    config = ContactScalingConfig(
-        n_rods=n_rods,
-        n_elements=n_elements,
-    )
-    device = eaj.resolve_backend_devices(backend)[0]
-    dt_value = np.float64(config.time_step)
-
-    with jax.default_device(device):
-        instantiate_start = time.perf_counter()
-        simulator, rod_block, _ = build_simulation_pairwise(config, device=device)
-        instantiate_seconds = time.perf_counter() - instantiate_start
-
-        stepper = eaj.PositionVerletJAX()
-        time_value = np.float64(0.0)
-        for _ in range(warmup_runs):
-            time_value = stepper.integrate(
-                simulator,
-                time=time_value,
-                final_time=time_value + steps * dt_value,
-                dt=dt_value,
-            )
-            _block_until_ready(rod_block)
-
-        rollout_start = time.perf_counter()
-        time_value = stepper.integrate(
-            simulator,
-            time=time_value,
-            final_time=time_value + steps * dt_value,
-            dt=dt_value,
-        )
-        _block_until_ready(rod_block)
-        rollout_seconds = time.perf_counter() - rollout_start
 
     return instantiate_seconds, rollout_seconds
 
